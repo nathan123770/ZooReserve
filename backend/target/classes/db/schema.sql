@@ -1,0 +1,198 @@
+CREATE DATABASE IF NOT EXISTS zoo_reserve DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE zoo_reserve;
+
+CREATE TABLE IF NOT EXISTS user (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  username VARCHAR(64) NOT NULL UNIQUE,
+  phone VARCHAR(32) UNIQUE,
+  password_hash VARCHAR(255) NOT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'ENABLED',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS admin_user (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  username VARCHAR(64) NOT NULL UNIQUE,
+  display_name VARCHAR(64) NOT NULL,
+  password_hash VARCHAR(255) NOT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'ENABLED',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS role (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  code VARCHAR(32) NOT NULL UNIQUE,
+  name VARCHAR(64) NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS permission (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  code VARCHAR(128) NOT NULL UNIQUE,
+  name VARCHAR(128) NOT NULL,
+  menu_path VARCHAR(255)
+);
+
+CREATE TABLE IF NOT EXISTS user_role (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  user_id BIGINT NOT NULL,
+  role_id BIGINT NOT NULL,
+  user_type VARCHAR(32) NOT NULL,
+  UNIQUE KEY uk_user_role (user_id, role_id, user_type)
+);
+
+CREATE TABLE IF NOT EXISTS visitor_profile (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  user_id BIGINT NOT NULL,
+  real_name VARCHAR(64) NOT NULL,
+  id_card_no VARCHAR(64) NOT NULL,
+  phone VARCHAR(32),
+  is_default TINYINT NOT NULL DEFAULT 0,
+  UNIQUE KEY uk_user_card (user_id, id_card_no)
+);
+
+CREATE TABLE IF NOT EXISTS ticket_type (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  code VARCHAR(32) NOT NULL UNIQUE,
+  name VARCHAR(64) NOT NULL,
+  price DECIMAL(10,2) NOT NULL,
+  description VARCHAR(255),
+  status VARCHAR(32) NOT NULL DEFAULT 'ENABLED'
+);
+
+CREATE TABLE IF NOT EXISTS ticket_inventory (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  visit_date DATE NOT NULL,
+  session_code VARCHAR(32) NOT NULL,
+  ticket_type_id BIGINT NOT NULL,
+  capacity INT NOT NULL,
+  remaining INT NOT NULL,
+  UNIQUE KEY uk_inventory (visit_date, session_code, ticket_type_id)
+);
+
+CREATE TABLE IF NOT EXISTS reservation_order (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  order_no VARCHAR(64) NOT NULL UNIQUE,
+  user_id BIGINT,
+  visit_date DATE NOT NULL,
+  session_code VARCHAR(32) NOT NULL,
+  amount DECIMAL(10,2) NOT NULL,
+  order_status VARCHAR(32) NOT NULL,
+  payment_status VARCHAR(32) NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_order_user (user_id),
+  INDEX idx_order_visit (visit_date, session_code)
+);
+
+CREATE TABLE IF NOT EXISTS order_item (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  order_id BIGINT NOT NULL,
+  ticket_type_id BIGINT NOT NULL,
+  quantity INT NOT NULL,
+  unit_price DECIMAL(10,2) NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS payment_record (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  order_id BIGINT NOT NULL,
+  payment_no VARCHAR(64) NOT NULL UNIQUE,
+  channel VARCHAR(32) NOT NULL,
+  amount DECIMAL(10,2) NOT NULL,
+  status VARCHAR(32) NOT NULL,
+  callback_payload JSON,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS refund_record (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  order_id BIGINT NOT NULL,
+  refund_no VARCHAR(64) NOT NULL UNIQUE,
+  amount DECIMAL(10,2) NOT NULL,
+  status VARCHAR(32) NOT NULL,
+  reason VARCHAR(255),
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS checkin_record (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  order_id BIGINT NOT NULL,
+  checker_id BIGINT NOT NULL,
+  status VARCHAR(32) NOT NULL,
+  remark VARCHAR(255),
+  checked_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_checkin_order (order_id)
+);
+
+CREATE TABLE IF NOT EXISTS activity (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  title VARCHAR(128) NOT NULL,
+  category VARCHAR(64) NOT NULL,
+  start_time DATETIME NOT NULL,
+  capacity INT NOT NULL,
+  location VARCHAR(128),
+  status VARCHAR(32) NOT NULL DEFAULT 'PUBLISHED'
+);
+
+CREATE TABLE IF NOT EXISTS activity_signup (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  activity_id BIGINT NOT NULL,
+  user_id BIGINT NOT NULL,
+  status VARCHAR(32) NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_activity_user (activity_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS zone (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  name VARCHAR(128) NOT NULL,
+  description VARCHAR(500),
+  map_x DECIMAL(10,6),
+  map_y DECIMAL(10,6)
+);
+
+CREATE TABLE IF NOT EXISTS animal (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  zone_id BIGINT,
+  name VARCHAR(128) NOT NULL,
+  species VARCHAR(128),
+  description VARCHAR(500),
+  media_url VARCHAR(500),
+  status VARCHAR(32) NOT NULL DEFAULT 'VISIBLE'
+);
+
+CREATE TABLE IF NOT EXISTS coupon (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  name VARCHAR(128) NOT NULL,
+  discount_type VARCHAR(32) NOT NULL,
+  discount_value DECIMAL(10,2) NOT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'ENABLED'
+);
+
+CREATE TABLE IF NOT EXISTS user_coupon (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  user_id BIGINT NOT NULL,
+  coupon_id BIGINT NOT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'UNUSED'
+);
+
+CREATE TABLE IF NOT EXISTS notice (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  title VARCHAR(128) NOT NULL,
+  content TEXT NOT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'PUBLISHED',
+  published_at DATETIME
+);
+
+CREATE TABLE IF NOT EXISTS operation_log (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  operator_id BIGINT,
+  action VARCHAR(128) NOT NULL,
+  resource VARCHAR(128),
+  detail VARCHAR(1000),
+  ip VARCHAR(64),
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT IGNORE INTO role (code, name) VALUES
+('VISITOR', '游客'),
+('ADMIN', '管理员'),
+('CHECKER', '核销员');
