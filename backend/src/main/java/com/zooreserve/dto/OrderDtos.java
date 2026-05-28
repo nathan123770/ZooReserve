@@ -15,7 +15,9 @@ public final class OrderDtos {
   public record OrderItemRequest(String ticketTypeCode, int quantity) {
   }
 
-  public record CreateOrderRequest(LocalDate visitDate, String session, List<OrderItemRequest> items) {
+  public record CreateOrderRequest(LocalDate visitDate, String session, List<OrderItemRequest> items,
+                                   Long couponId, Long annualPassId, List<Long> visitorProfileIds,
+                                   String orderType) {
   }
 
   public record OrderResponse(Long id, String orderNo, LocalDate visitDate, String session, int peopleCount,

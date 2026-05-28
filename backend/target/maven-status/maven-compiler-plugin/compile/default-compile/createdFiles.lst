@@ -25,6 +25,7 @@ com\zooreserve\security\JwtTokenService.class
 com\zooreserve\domain\enums\RoleCode.class
 com\zooreserve\dto\TicketDtos$TicketTypeResponse.class
 com\zooreserve\integration\MessagePublisher.class
+com\zooreserve\controller\MemberController.class
 com\zooreserve\mapper\ReservationOrderMapper.class
 com\zooreserve\controller\CheckinController.class
 com\zooreserve\domain\entity\ReservationOrder.class
@@ -49,6 +50,7 @@ com\zooreserve\mapper\ActivityMapper.class
 com\zooreserve\security\SecurityConfig.class
 com\zooreserve\dto\CheckinDtos$ManualCheckinRequest.class
 com\zooreserve\controller\AdminController.class
+com\zooreserve\dto\AuthDtos$RegisterRequest.class
 com\zooreserve\dto\OrderDtos$CreateOrderRequest.class
 com\zooreserve\dto\OrderDtos$OrderItemRequest.class
 com\zooreserve\common\PageResult.class
@@ -57,6 +59,7 @@ com\zooreserve\domain\enums\PaymentStatus.class
 com\zooreserve\controller\PaymentController.class
 com\zooreserve\integration\ObjectStorageClient.class
 com\zooreserve\integration\PaymentGateway.class
+com\zooreserve\service\MemberService.class
 com\zooreserve\dto\ActivityDtos$ActivityResponse.class
 com\zooreserve\domain\entity\Activity.class
 com\zooreserve\dto\AdminDtos$SimpleRecord.class

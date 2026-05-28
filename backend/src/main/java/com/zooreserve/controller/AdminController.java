@@ -3,9 +3,9 @@ package com.zooreserve.controller;
 import com.zooreserve.common.ApiResponse;
 import com.zooreserve.common.PageResult;
 import com.zooreserve.dto.AdminDtos.DashboardSummary;
-import com.zooreserve.dto.AdminDtos.SimpleRecord;
-import com.zooreserve.dto.OrderDtos.OrderResponse;
 import com.zooreserve.service.AdminMockService;
+import com.zooreserve.service.MockOrderService;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -20,9 +20,11 @@ import java.util.Map;
 @RequestMapping("/api/admin")
 public class AdminController {
   private final AdminMockService adminMockService;
+  private final MockOrderService orderService;
 
-  public AdminController(AdminMockService adminMockService) {
+  public AdminController(AdminMockService adminMockService, MockOrderService orderService) {
     this.adminMockService = adminMockService;
+    this.orderService = orderService;
   }
 
   @GetMapping("/dashboard/summary")
@@ -31,39 +33,71 @@ public class AdminController {
   }
 
   @GetMapping("/orders")
-  public ApiResponse<PageResult<OrderResponse>> orders() {
-    return ApiResponse.ok(adminMockService.orders());
+  public ApiResponse<PageResult<Map<String, Object>>> orders() {
+    return ApiResponse.ok(adminMockService.records("orders"));
   }
 
-  @PostMapping("/tickets/types")
-  public ApiResponse<SimpleRecord> createTicketType(@RequestBody(required = false) SimpleRecord request) {
-    SimpleRecord payload = request == null ? new SimpleRecord(null, "新票种", "ENABLED", "后台创建") : request;
-    return ApiResponse.ok(adminMockService.create("tickets", payload));
+  @PostMapping({"/tickets", "/tickets/types"})
+  public ApiResponse<Map<String, Object>> createTicketType(@RequestBody(required = false) Map<String, Object> request) {
+    return ApiResponse.ok(adminMockService.create("tickets", request == null ? Map.of() : request));
   }
 
   @PutMapping("/tickets/inventory")
-  public ApiResponse<Map<String, Object>> updateInventory() {
-    return ApiResponse.ok(Map.of("updated", true));
+  public ApiResponse<Map<String, Object>> updateInventory(@RequestBody Map<String, Object> payload) {
+    return ApiResponse.ok(adminMockService.updateInventory(payload));
   }
 
   @PostMapping("/refunds/{id}/approve")
   public ApiResponse<Map<String, Object>> approveRefund(@PathVariable Long id) {
-    return ApiResponse.ok(Map.of("refundId", id, "status", "REFUNDED"));
+    return ApiResponse.ok(orderService.approveRefund(id));
   }
 
-  @PostMapping({"/activities", "/animals", "/notices"})
-  public ApiResponse<SimpleRecord> createResource(@RequestBody(required = false) SimpleRecord request) {
-    SimpleRecord payload = request == null ? new SimpleRecord(null, "新资源", "ENABLED", "后台创建") : request;
-    return ApiResponse.ok(adminMockService.create("管理", payload));
+  @PostMapping({"/activities", "/animals", "/marketing", "/system", "/notices"})
+  public ApiResponse<Map<String, Object>> createResource(@RequestBody(required = false) Map<String, Object> request,
+                                                         HttpServletRequest servletRequest) {
+    return ApiResponse.ok(adminMockService.create(domainFrom(servletRequest), request == null ? Map.of() : request));
   }
 
   @GetMapping({"/tickets", "/activities", "/animals", "/notices", "/users", "/marketing", "/checkins", "/system"})
-  public ApiResponse<PageResult<SimpleRecord>> listResource() {
-    return ApiResponse.ok(adminMockService.simpleRecords("管理"));
+  public ApiResponse<PageResult<Map<String, Object>>> listResource(HttpServletRequest request) {
+    return ApiResponse.ok(adminMockService.records(domainFrom(request)));
+  }
+
+  @PutMapping({"/tickets/{id}", "/activities/{id}", "/animals/{id}", "/marketing/{id}", "/system/{id}"})
+  public ApiResponse<Map<String, Object>> updateResource(@PathVariable Long id,
+                                                         @RequestBody Map<String, Object> payload,
+                                                         HttpServletRequest request) {
+    return ApiResponse.ok(adminMockService.update(domainFromNested(request), id, payload));
+  }
+
+  @PutMapping({"/tickets/{id}/status", "/activities/{id}/status", "/animals/{id}/status", "/system/{id}/status"})
+  public ApiResponse<Map<String, Object>> updateStatus(@PathVariable Long id,
+                                                       @RequestBody Map<String, Object> payload,
+                                                       HttpServletRequest request) {
+    return ApiResponse.ok(adminMockService.toggleStatus(domainFromNestedStatus(request), id,
+        String.valueOf(payload.getOrDefault("status", "ENABLED"))));
   }
 
   @GetMapping("/logs")
-  public ApiResponse<PageResult<SimpleRecord>> logs() {
-    return ApiResponse.ok(adminMockService.simpleRecords("操作日志"));
+  public ApiResponse<PageResult<Map<String, Object>>> logs() {
+    return ApiResponse.ok(adminMockService.records("logs"));
+  }
+
+  private String domainFrom(HttpServletRequest request) {
+    String domain = request.getRequestURI().substring(request.getRequestURI().lastIndexOf('/') + 1);
+    if ("notices".equals(domain) || "users".equals(domain)) {
+      return "notices".equals(domain) ? "marketing" : "system";
+    }
+    return domain;
+  }
+
+  private String domainFromNested(HttpServletRequest request) {
+    String path = request.getRequestURI();
+    return path.substring(path.indexOf("/admin/") + 7, path.lastIndexOf('/'));
+  }
+
+  private String domainFromNestedStatus(HttpServletRequest request) {
+    String nested = domainFromNested(request);
+    return nested.substring(0, nested.lastIndexOf('/'));
   }
 }

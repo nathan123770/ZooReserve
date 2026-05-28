@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue';
+import { onMounted, reactive, ref } from 'vue';
 import { ElMessageBox } from 'element-plus';
 import { Bell, CreditCard, Edit3, Star, TicketPercent, UserPlus, Users } from 'lucide-vue-next';
 import { useMemberStore } from '@/stores/member';
@@ -13,26 +13,28 @@ const profileForm = reactive({
   name: '',
   idCard: '',
   phone: '',
-  relation: '亲友',
+  relation: '家人',
   isDefault: false,
 });
+
+onMounted(() => member.loadAll());
 
 function openProfileDialog(profile?: MemberProfile) {
   editingProfileId.value = profile?.id;
   profileForm.name = profile?.name ?? '';
   profileForm.idCard = profile?.idCard ?? '';
   profileForm.phone = profile?.phone ?? '';
-  profileForm.relation = profile?.relation ?? '亲友';
+  profileForm.relation = profile?.relation ?? '家人';
   profileForm.isDefault = profile?.isDefault ?? false;
   profileDialogVisible.value = true;
 }
 
-function saveProfile() {
+async function saveProfile() {
   if (!profileForm.name || !profileForm.idCard || !profileForm.phone) {
     toast.warning('请填写姓名、证件号和手机号');
     return;
   }
-  member.saveProfile({
+  await member.saveProfile({
     id: editingProfileId.value,
     name: profileForm.name,
     idCard: profileForm.idCard,
@@ -50,7 +52,7 @@ async function deleteProfile(profile: MemberProfile) {
     cancelButtonText: '取消',
     type: 'warning',
   });
-  member.deleteProfile(profile.id);
+  await member.deleteProfile(profile.id);
   toast.success('常用游客已删除');
 }
 </script>
@@ -60,7 +62,7 @@ async function deleteProfile(profile: MemberProfile) {
     <div class="section-heading">
       <p class="eyebrow">Member</p>
       <h2>会员中心</h2>
-      <span>管理个人资料、常用游客、年卡权益、优惠券和消息通知。</span>
+      <span>管理常用游客、年卡权益、优惠券和消息通知。</span>
     </div>
 
     <section class="member-overview">
@@ -120,11 +122,11 @@ async function deleteProfile(profile: MemberProfile) {
             <el-tag type="success">{{ member.annualPass.status }}</el-tag>
           </div>
           <p>有效期至 {{ member.annualPass.expiresAt }}</p>
-          <p>绑定游客：{{ member.annualPass.boundVisitors.join('、') }}</p>
+          <p>绑定游客：{{ member.annualPass.boundVisitors.join('、') || '未绑定' }}</p>
           <ul>
             <li v-for="benefit in member.annualPass.benefits" :key="benefit">{{ benefit }}</li>
           </ul>
-          <el-button plain type="success">查看权益</el-button>
+          <el-button plain type="success" :disabled="!member.annualPass.id" @click="member.renewAnnualPass()">续费一年</el-button>
         </section>
 
         <section class="member-panel">
@@ -137,7 +139,7 @@ async function deleteProfile(profile: MemberProfile) {
               <strong>{{ coupon.name }}</strong>
               <span>{{ coupon.threshold }} · {{ coupon.expiresAt }} 到期</span>
             </div>
-            <el-tag :type="coupon.status === '可用' ? 'success' : coupon.status === '已使用' ? 'info' : 'danger'">{{ coupon.status }}</el-tag>
+            <el-tag :type="coupon.status === '可用' ? 'success' : coupon.status === '已使用' ? 'info' : 'warning'">{{ coupon.status }}</el-tag>
           </article>
         </section>
 
@@ -163,7 +165,8 @@ async function deleteProfile(profile: MemberProfile) {
           <el-select v-model="profileForm.relation">
             <el-option label="本人" value="本人" />
             <el-option label="子女" value="子女" />
-            <el-option label="亲友" value="亲友" />
+            <el-option label="家人" value="家人" />
+            <el-option label="朋友" value="朋友" />
           </el-select>
         </el-form-item>
         <el-form-item><el-checkbox v-model="profileForm.isDefault">设为默认游客</el-checkbox></el-form-item>

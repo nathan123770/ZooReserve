@@ -1,5 +1,16 @@
-import { getData, postData } from './http';
-import type { ActivityRecord, LoginResponse, OrderRecord, RoleCode, TicketInventory, TicketType } from '@/types/api';
+import { deleteData, getData, postData, putData } from './http';
+import type {
+  ActivityRecord,
+  AnnualPassRecord,
+  LoginResponse,
+  MemberCouponRecord,
+  MemberProfileRecord,
+  OrderRecord,
+  PaymentResponse,
+  RoleCode,
+  TicketInventory,
+  TicketType,
+} from '@/types/api';
 
 export const authApi = {
   login: (username: string, password: string, role: RoleCode) =>
@@ -16,7 +27,27 @@ export const ticketApi = {
 export const orderApi = {
   create: (payload: unknown) => postData<OrderRecord>('/orders', payload),
   my: () => getData<OrderRecord[]>('/orders/my'),
-  qrcode: (id: number) => getData<{ qrContent: string; entranceNotice: string }>(`/orders/${id}/qrcode`),
+  qrcode: (id: number) => getData<{ orderNo: string; qrContent: string; visitDate: string; entranceNotice: string }>(`/orders/${id}/qrcode`),
+  cancel: (id: number) => postData<OrderRecord>(`/orders/${id}/cancel`),
+  refund: (id: number | string) => postData<OrderRecord>(`/orders/${id}/refund`),
+};
+
+export const paymentApi = {
+  prepay: (orderNo: string) =>
+    postData<PaymentResponse>('/payments/prepay', { orderNo, channel: 'MOCK' }),
+};
+
+export const memberApi = {
+  profiles: () => getData<MemberProfileRecord[]>('/member/profiles'),
+  coupons: () => getData<MemberCouponRecord[]>('/member/coupons'),
+  annualPasses: () => getData<AnnualPassRecord[]>('/member/annual-passes'),
+  createProfile: (payload: unknown) => postData<MemberProfileRecord>('/member/profiles', payload),
+  updateProfile: (id: number, payload: unknown) => putData<MemberProfileRecord>(`/member/profiles/${id}`, payload),
+  deleteProfile: (id: number) => deleteData<Record<string, unknown>>(`/member/profiles/${id}`),
+  claimCoupon: (couponId: number) => postData<Record<string, unknown>>(`/member/coupons/${couponId}/claim`),
+  purchaseAnnualPass: (payload: unknown) => postData<Record<string, unknown>>('/member/annual-passes/purchase', payload),
+  renewAnnualPass: (id: number) => postData<Record<string, unknown>>(`/member/annual-passes/${id}/renew`),
+  addAnnualPassHolder: (id: number, payload: unknown) => postData<Record<string, unknown>>(`/member/annual-passes/${id}/holders`, payload),
 };
 
 export const activityApi = {
@@ -27,6 +58,12 @@ export const activityApi = {
 export const adminApi = {
   dashboard: () => getData<Record<string, unknown>>('/admin/dashboard/summary'),
   records: (domain: string) => getData<{ records: unknown[] }>(domain === 'orders' ? '/admin/orders' : `/admin/${domain}`),
+  create: (domain: string, payload: Record<string, unknown>) => postData<Record<string, unknown>>(`/admin/${domain}`, payload),
+  update: (domain: string, id: number, payload: Record<string, unknown>) =>
+    putData<Record<string, unknown>>(`/admin/${domain}/${id}`, payload),
+  updateInventory: (payload: Record<string, unknown>) => putData<Record<string, unknown>>('/admin/tickets/inventory', payload),
+  toggleStatus: (domain: string, id: number, status: string) =>
+    putData<Record<string, unknown>>(`/admin/${domain}/${id}/status`, { status }),
 };
 
 export const checkinApi = {

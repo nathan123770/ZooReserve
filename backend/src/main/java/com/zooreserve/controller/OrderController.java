@@ -37,4 +37,14 @@ public class OrderController {
   public ApiResponse<QrCodeResponse> qrcode(@PathVariable Long id) {
     return ApiResponse.ok(orderService.qrcode(id));
   }
+
+  @PostMapping("/{id}/cancel")
+  public ApiResponse<OrderResponse> cancel(@PathVariable Long id) {
+    return ApiResponse.ok(orderService.cancel(id));
+  }
+
+  @PostMapping("/{idOrNo}/refund")
+  public ApiResponse<OrderResponse> refund(@PathVariable String idOrNo) {
+    return ApiResponse.ok(orderService.refund(idOrNo));
+  }
 }

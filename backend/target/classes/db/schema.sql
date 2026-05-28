@@ -75,7 +75,12 @@ CREATE TABLE IF NOT EXISTS reservation_order (
   user_id BIGINT,
   visit_date DATE NOT NULL,
   session_code VARCHAR(32) NOT NULL,
+  order_type VARCHAR(32) NOT NULL DEFAULT 'TICKET',
+  original_amount DECIMAL(10,2) NOT NULL DEFAULT 0,
+  discount_amount DECIMAL(10,2) NOT NULL DEFAULT 0,
   amount DECIMAL(10,2) NOT NULL,
+  coupon_id BIGINT,
+  annual_pass_id BIGINT,
   order_status VARCHAR(32) NOT NULL,
   payment_status VARCHAR(32) NOT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -164,6 +169,12 @@ CREATE TABLE IF NOT EXISTS coupon (
   name VARCHAR(128) NOT NULL,
   discount_type VARCHAR(32) NOT NULL,
   discount_value DECIMAL(10,2) NOT NULL,
+  threshold_amount DECIMAL(10,2) NOT NULL DEFAULT 0,
+  total_quantity INT,
+  claimed_quantity INT NOT NULL DEFAULT 0,
+  valid_from DATE,
+  valid_to DATE,
+  scope VARCHAR(64) NOT NULL DEFAULT 'TICKET',
   status VARCHAR(32) NOT NULL DEFAULT 'ENABLED'
 );
 
@@ -171,7 +182,48 @@ CREATE TABLE IF NOT EXISTS user_coupon (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   user_id BIGINT NOT NULL,
   coupon_id BIGINT NOT NULL,
-  status VARCHAR(32) NOT NULL DEFAULT 'UNUSED'
+  status VARCHAR(32) NOT NULL DEFAULT 'UNUSED',
+  order_id BIGINT,
+  claimed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  used_at DATETIME
+);
+
+CREATE TABLE IF NOT EXISTS annual_pass_plan (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  code VARCHAR(32) NOT NULL UNIQUE,
+  name VARCHAR(128) NOT NULL,
+  price DECIMAL(10,2) NOT NULL,
+  valid_days INT NOT NULL,
+  holder_limit INT NOT NULL,
+  benefits VARCHAR(1000),
+  status VARCHAR(32) NOT NULL DEFAULT 'ENABLED'
+);
+
+CREATE TABLE IF NOT EXISTS annual_pass (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  user_id BIGINT NOT NULL,
+  plan_id BIGINT NOT NULL,
+  pass_no VARCHAR(64) NOT NULL UNIQUE,
+  started_at DATE NOT NULL,
+  expires_at DATE NOT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS annual_pass_holder (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  annual_pass_id BIGINT NOT NULL,
+  profile_id BIGINT NOT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE',
+  UNIQUE KEY uk_pass_holder (annual_pass_id, profile_id)
+);
+
+CREATE TABLE IF NOT EXISTS annual_pass_usage (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  annual_pass_id BIGINT NOT NULL,
+  order_id BIGINT NOT NULL,
+  used_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_pass_order (annual_pass_id, order_id)
 );
 
 CREATE TABLE IF NOT EXISTS notice (
@@ -191,6 +243,35 @@ CREATE TABLE IF NOT EXISTS operation_log (
   ip VARCHAR(64),
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'reservation_order' AND COLUMN_NAME = 'order_type') = 0, 'ALTER TABLE reservation_order ADD COLUMN order_type VARCHAR(32) NOT NULL DEFAULT ''TICKET''', 'SELECT 1');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'reservation_order' AND COLUMN_NAME = 'original_amount') = 0, 'ALTER TABLE reservation_order ADD COLUMN original_amount DECIMAL(10,2) NOT NULL DEFAULT 0', 'SELECT 1');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'reservation_order' AND COLUMN_NAME = 'discount_amount') = 0, 'ALTER TABLE reservation_order ADD COLUMN discount_amount DECIMAL(10,2) NOT NULL DEFAULT 0', 'SELECT 1');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'reservation_order' AND COLUMN_NAME = 'coupon_id') = 0, 'ALTER TABLE reservation_order ADD COLUMN coupon_id BIGINT', 'SELECT 1');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'reservation_order' AND COLUMN_NAME = 'annual_pass_id') = 0, 'ALTER TABLE reservation_order ADD COLUMN annual_pass_id BIGINT', 'SELECT 1');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'coupon' AND COLUMN_NAME = 'threshold_amount') = 0, 'ALTER TABLE coupon ADD COLUMN threshold_amount DECIMAL(10,2) NOT NULL DEFAULT 0', 'SELECT 1');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'coupon' AND COLUMN_NAME = 'total_quantity') = 0, 'ALTER TABLE coupon ADD COLUMN total_quantity INT', 'SELECT 1');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'coupon' AND COLUMN_NAME = 'claimed_quantity') = 0, 'ALTER TABLE coupon ADD COLUMN claimed_quantity INT NOT NULL DEFAULT 0', 'SELECT 1');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'coupon' AND COLUMN_NAME = 'valid_from') = 0, 'ALTER TABLE coupon ADD COLUMN valid_from DATE', 'SELECT 1');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'coupon' AND COLUMN_NAME = 'valid_to') = 0, 'ALTER TABLE coupon ADD COLUMN valid_to DATE', 'SELECT 1');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'coupon' AND COLUMN_NAME = 'scope') = 0, 'ALTER TABLE coupon ADD COLUMN scope VARCHAR(64) NOT NULL DEFAULT ''TICKET''', 'SELECT 1');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user_coupon' AND COLUMN_NAME = 'order_id') = 0, 'ALTER TABLE user_coupon ADD COLUMN order_id BIGINT', 'SELECT 1');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user_coupon' AND COLUMN_NAME = 'claimed_at') = 0, 'ALTER TABLE user_coupon ADD COLUMN claimed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP', 'SELECT 1');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user_coupon' AND COLUMN_NAME = 'used_at') = 0, 'ALTER TABLE user_coupon ADD COLUMN used_at DATETIME', 'SELECT 1');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 INSERT IGNORE INTO role (code, name) VALUES
 ('VISITOR', '游客'),

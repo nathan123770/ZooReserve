@@ -46,6 +46,47 @@ export interface OrderRecord {
   createdAt: string;
 }
 
+export interface PaymentResponse {
+  orderNo: string;
+  channel: string;
+  amount: number;
+  paymentStatus: string;
+  mockPayUrl: string;
+}
+
+export interface MemberProfileRecord {
+  id: number;
+  name?: string;
+  realName?: string;
+  idCard?: string;
+  idcard?: string;
+  idCardNo?: string;
+  phone: string;
+  relation?: string;
+  isDefault?: boolean | number;
+  isdefault?: boolean | number;
+}
+
+export interface MemberCouponRecord {
+  id: number;
+  name: string;
+  threshold?: string;
+  thresholdAmount?: number;
+  discountValue?: number;
+  discountType?: string;
+  status: string;
+  expiresAt?: string;
+}
+
+export interface AnnualPassRecord {
+  id: number;
+  name: string;
+  status: string;
+  expiresAt: string;
+  boundVisitors?: string[] | string;
+  benefits?: string[] | string;
+}
+
 export interface ActivityRecord {
   id: number;
   title: string;

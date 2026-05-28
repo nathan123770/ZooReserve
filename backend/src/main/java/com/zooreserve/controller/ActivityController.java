@@ -28,6 +28,7 @@ public class ActivityController {
 
   @PostMapping("/{id}/signup")
   public ApiResponse<Map<String, Object>> signup(@PathVariable Long id) {
+    catalogService.signup(id, 1L);
     return ApiResponse.ok(Map.of("activityId", id, "status", "SIGNED"));
   }
 }

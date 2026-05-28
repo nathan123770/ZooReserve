@@ -111,9 +111,14 @@ class SkeletonApiTest {
   }
 
   private String tokenFor(String username, String role) throws Exception {
+    String password = switch (role) {
+      case "ADMIN" -> "admin123";
+      case "CHECKER" -> "checker123";
+      default -> "visitor123";
+    };
     String login = mockMvc.perform(post("/api/auth/login")
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"username\":\"" + username + "\",\"password\":\"password\",\"role\":\"" + role + "\"}"))
+            .content("{\"username\":\"" + username + "\",\"password\":\"" + password + "\",\"role\":\"" + role + "\"}"))
         .andReturn()
         .getResponse()
         .getContentAsString();

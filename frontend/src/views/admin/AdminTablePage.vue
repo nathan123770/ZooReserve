@@ -2,6 +2,7 @@
 import { computed, reactive, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { Download, Filter, Plus, RefreshCw, Search } from 'lucide-vue-next';
+import { adminApi } from '@/api/modules';
 import { toast } from '@/utils/message';
 import { getAdminModule } from './adminModules';
 import type { AdminFormField } from './adminModules';
@@ -19,41 +20,51 @@ const filters = reactive<Record<string, string>>({});
 const domain = computed(() => route.meta.domain as string);
 const moduleConfig = computed(() => getAdminModule(domain.value));
 const records = ref<Record<string, unknown>[]>([]);
+const allRecords = ref<Record<string, unknown>[]>([]);
 const selectedRows = ref<Record<string, unknown>[]>([]);
 
 function resetData() {
-  records.value = moduleConfig.value.records.map((record) => ({ ...record }));
+  records.value = [];
+  allRecords.value = [];
   selectedRows.value = [];
   for (const filter of moduleConfig.value.filters) {
     filters[filter.key] = '';
   }
 }
 
+async function loadRecords() {
+  loading.value = true;
+  try {
+    const page = await adminApi.records(domain.value);
+    allRecords.value = page.records.map((record) => ({ ...(record as Record<string, unknown>) }));
+    records.value = allRecords.value.map((record) => ({ ...record }));
+  } finally {
+    loading.value = false;
+  }
+}
+
 function statusType(status: unknown) {
   const text = String(status);
-  if (['启用', '展示中', '已预约', '已核销', '投放中'].includes(text)) return 'success';
-  if (['待支付', '草稿', '未核销', '待审核', '未开始'].includes(text)) return 'warning';
-  if (['退款中', '异常核销', '维护中', '锁定'].includes(text)) return 'danger';
+  if (['ENABLED', 'PUBLISHED', 'VISIBLE', 'PAID', 'CHECKED_IN', 'PAY_SUCCESS', '投放中', '启用', '展示中'].includes(text)) return 'success';
+  if (['PENDING_PAYMENT', 'UNPAID', 'DRAFT', 'NOT_CHECKED', '待支付', '草稿', '未核销'].includes(text)) return 'warning';
+  if (['DISABLED', 'EXCEPTION', 'REFUNDING', 'LOCKED', '停用', '异常核销', '退款中'].includes(text)) return 'danger';
   return 'info';
 }
 
 function applyFilters() {
-  loading.value = true;
-  window.setTimeout(() => {
-    const keyword = filters.keyword?.trim();
-    const status = filters.status;
-    records.value = moduleConfig.value.records.filter((record) => {
-      const text = Object.values(record).join(' ');
-      const keywordMatched = !keyword || text.includes(keyword);
-      const statusMatched = !status || record.status === status;
-      return keywordMatched && statusMatched;
-    });
-    loading.value = false;
-  }, 180);
+  const keyword = filters.keyword?.trim();
+  const status = filters.status;
+  records.value = allRecords.value.filter((record) => {
+    const text = Object.values(record).join(' ');
+    const keywordMatched = !keyword || text.includes(keyword);
+    const statusMatched = !status || record.status === status;
+    return keywordMatched && statusMatched;
+  });
 }
 
 function resetFilters() {
   resetData();
+  void loadRecords();
 }
 
 function openCreate() {
@@ -72,21 +83,18 @@ function openEdit(row: Record<string, unknown>) {
   drawerVisible.value = true;
 }
 
-function submitForm() {
+async function submitForm() {
   const payload: Record<string, unknown> = {};
   for (const field of moduleConfig.value.formFields) {
     payload[field.key] = formModel[field.key];
   }
   if (editingRecord.value) {
-    Object.assign(editingRecord.value, payload);
+    await adminApi.update(domain.value, Number(editingRecord.value.id), payload);
   } else {
-    records.value.unshift({
-      id: Date.now(),
-      status: payload.status ?? '启用',
-      ...payload,
-    });
+    await adminApi.create(domain.value, payload);
   }
   drawerVisible.value = false;
+  await loadRecords();
   toast.success(editingRecord.value ? '记录已更新' : '记录已新增');
 }
 
@@ -101,42 +109,53 @@ function openInventory(row: Record<string, unknown>) {
   inventoryDialogVisible.value = true;
 }
 
-function saveInventory() {
+async function saveInventory() {
   if (activeInventoryRow.value) {
-    activeInventoryRow.value.capacity = inventoryForm.capacity;
-    activeInventoryRow.value.remaining = inventoryForm.remaining;
+    await adminApi.updateInventory({
+      visitDate: activeInventoryRow.value.visitDate ?? new Date().toISOString().slice(0, 10),
+      session: activeInventoryRow.value.session ?? 'AM',
+      ticketTypeCode: activeInventoryRow.value.ticketTypeCode ?? activeInventoryRow.value.code,
+      capacity: inventoryForm.capacity,
+      remaining: inventoryForm.remaining,
+    });
   }
   inventoryDialogVisible.value = false;
+  await loadRecords();
   toast.success('库存已更新');
 }
 
-function toggleRowStatus(row: Record<string, unknown>) {
+async function toggleRowStatus(row: Record<string, unknown>) {
   const current = String(row.status ?? '');
-  row.status = ['启用', '投放中', '展示中'].includes(current) ? '已停用' : '启用';
-  toast.success(`状态已更新为 ${row.status}`);
+  const nextStatus = ['ENABLED', 'PUBLISHED', 'VISIBLE', '启用', '展示中'].includes(current) ? 'DISABLED' : 'ENABLED';
+  await adminApi.toggleStatus(domain.value, Number(row.id), nextStatus);
+  await loadRecords();
+  toast.success(`状态已更新为 ${nextStatus}`);
 }
 
-function handleRowAction(action: string, row: Record<string, unknown>) {
-  if (action === '编辑' || action === '详情') {
+async function handleRowAction(action: string, row: Record<string, unknown>) {
+  if (action.includes('编辑') || action.includes('详情')) {
     openEdit(row);
     return;
   }
-  if (action === '库存') {
+  if (action.includes('库存')) {
     openInventory(row);
     return;
   }
-  if (action === '停用' || action === '启用') {
-    toggleRowStatus(row);
+  if (action.includes('停用') || action.includes('启用')) {
+    await toggleRowStatus(row);
     return;
   }
   toast.info(`${action}功能已进入处理队列`);
 }
 
 function exportRecords() {
-  toast.success(`已生成 ${moduleConfig.value.title} 导出任务`);
+  toast.success(`已生成${moduleConfig.value.title}导出任务`);
 }
 
-watch(domain, resetData, { immediate: true });
+watch(domain, () => {
+  resetData();
+  void loadRecords();
+}, { immediate: true });
 </script>
 
 <template>

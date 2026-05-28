@@ -1,6 +1,7 @@
 package com.zooreserve.common;
 
 import org.springframework.http.HttpStatus;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseStatus;
@@ -13,6 +14,12 @@ public class GlobalExceptionHandler {
   @ResponseStatus(HttpStatus.CONFLICT)
   public ApiResponse<Void> illegalState(IllegalStateException exception) {
     return new ApiResponse<>(409, exception.getMessage(), null);
+  }
+
+  @ExceptionHandler(BadCredentialsException.class)
+  @ResponseStatus(HttpStatus.UNAUTHORIZED)
+  public ApiResponse<Void> badCredentials(BadCredentialsException exception) {
+    return new ApiResponse<>(401, exception.getMessage(), null);
   }
 
   @ExceptionHandler(MethodArgumentNotValidException.class)

@@ -6,6 +6,8 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.crypto.factory.PasswordEncoderFactories;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.access.AccessDeniedHandler;
@@ -40,7 +42,7 @@ public class SecurityConfig {
             ).permitAll()
             .requestMatchers("/api/admin/**").hasRole("ADMIN")
             .requestMatchers("/api/checkin/**").hasAnyRole("CHECKER", "ADMIN")
-            .requestMatchers("/api/orders/**", "/api/payments/**", "/api/refunds/**").hasAnyRole("VISITOR", "ADMIN")
+            .requestMatchers("/api/orders/**", "/api/payments/**", "/api/refunds/**", "/api/member/**").hasAnyRole("VISITOR", "ADMIN")
             .anyRequest().authenticated())
         .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
         .build();
@@ -62,5 +64,10 @@ public class SecurityConfig {
       response.setContentType("application/json;charset=UTF-8");
       response.getWriter().write("{\"code\":403,\"message\":\"forbidden\",\"data\":null}");
     };
+  }
+
+  @Bean
+  PasswordEncoder passwordEncoder() {
+    return PasswordEncoderFactories.createDelegatingPasswordEncoder();
   }
 }

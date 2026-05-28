@@ -1,12 +1,21 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
+import { useRouter } from 'vue-router';
 import { ElMessageBox } from 'element-plus';
 import { Minus, Plus, ShoppingCart } from 'lucide-vue-next';
 import { bookingTickets, useBookingStore } from '@/stores/booking';
+import { useMemberStore } from '@/stores/member';
+import { useOrderStore } from '@/stores/order';
 import { toast } from '@/utils/message';
 
+const router = useRouter();
 const booking = useBookingStore();
+const member = useMemberStore();
+const orderStore = useOrderStore();
 const active = ref(0);
+const couponId = ref<number | undefined>();
+const annualPassId = ref<number | undefined>();
+const useAnnualPass = ref(false);
 
 const sessionOptions = [
   { label: '上午 08:30-12:00', value: 'AM' },
@@ -24,6 +33,11 @@ const orderSummary = computed(() =>
     };
   }),
 );
+
+const selectedCoupon = computed(() => member.coupons.find((coupon) => coupon.id === couponId.value));
+const payableAmount = computed(() => (useAnnualPass.value ? 0 : booking.totalAmount));
+
+onMounted(() => member.loadAll());
 
 function changeQuantity(ticketCode: string, delta: number) {
   booking.setQuantity(ticketCode, (booking.selectedTickets[ticketCode] ?? 0) + delta);
@@ -48,13 +62,39 @@ async function createOrder() {
   }
   const lines = orderSummary.value.map((item) => `${item.name} x ${item.quantity}`).join('，');
   await ElMessageBox.confirm(
-    `预约日期：${booking.visitDate}\n预约场次：${booking.session === 'AM' ? '上午' : '下午'}\n票种：${lines}\n合计：¥${booking.totalAmount}`,
+    `预约日期：${booking.visitDate}\n预约场次：${booking.session === 'AM' ? '上午' : '下午'}\n票种：${lines}\n应付：¥${payableAmount.value}`,
     '确认预约订单',
     { confirmButtonText: '确认提交', cancelButtonText: '再看看', type: 'success' },
   );
+  const order = await orderStore.createReservation({
+    visitDate: booking.visitDate,
+    session: booking.session,
+    items: booking.selectedItems,
+    couponId: couponId.value,
+    annualPassId: useAnnualPass.value ? annualPassId.value : undefined,
+    orderType: useAnnualPass.value ? 'ANNUAL_PASS' : 'TICKET',
+  });
   booking.commitOrder();
   active.value = 2;
-  toast.success('订单已提交，库存已同步扣减');
+
+  if (order.paymentStatus === 'PAY_SUCCESS') {
+    toast.success(`订单 ${order.orderNo} 已预约成功`);
+    router.push({ name: 'entry-pass', query: { orderId: order.id } });
+    return;
+  }
+
+  try {
+    await ElMessageBox.confirm(`订单 ${order.orderNo} 已提交，是否立即模拟支付？`, '提交成功', {
+      confirmButtonText: '立即支付',
+      cancelButtonText: '去订单页',
+      type: 'success',
+    });
+    await orderStore.payOrder(order);
+    toast.success('支付成功，已生成入园二维码');
+    router.push({ name: 'entry-pass', query: { orderId: order.id } });
+  } catch {
+    router.push({ name: 'my-orders' });
+  }
 }
 </script>
 
@@ -63,7 +103,7 @@ async function createOrder() {
     <div class="section-heading">
       <p class="eyebrow">Ticket Booking</p>
       <h2>门票预约</h2>
-      <span>选择日期、场次和票种数量，确认价格后提交预约。</span>
+      <span>选择日期、场次和票种，可使用优惠券或年卡权益完成预约。</span>
     </div>
     <el-steps :active="active" finish-status="success">
       <el-step title="选择日期" />
@@ -78,6 +118,22 @@ async function createOrder() {
         </el-form-item>
         <el-form-item label="预约场次">
           <el-segmented v-model="booking.session" :options="sessionOptions" @change="switchSession" />
+        </el-form-item>
+        <el-form-item label="年卡权益">
+          <el-switch v-model="useAnnualPass" :disabled="!member.annualPass.id" />
+          <el-select v-if="useAnnualPass" v-model="annualPassId" placeholder="选择年卡" style="width: 180px; margin-left: 12px">
+            <el-option v-for="pass in member.annualPasses" :key="pass.id" :label="pass.name" :value="pass.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item v-if="!useAnnualPass" label="优惠券">
+          <el-select v-model="couponId" clearable placeholder="不使用优惠券" style="width: 220px">
+            <el-option
+              v-for="coupon in member.coupons.filter((item) => item.status === '可用')"
+              :key="coupon.id"
+              :label="`${coupon.name} · ${coupon.threshold}`"
+              :value="coupon.id"
+            />
+          </el-select>
         </el-form-item>
       </el-form>
 
@@ -117,10 +173,12 @@ async function createOrder() {
           <strong>订单确认</strong>
           <span v-if="!orderSummary.length">请选择需要预约的票种</span>
           <span v-else>{{ orderSummary.map((item) => `${item.name} x${item.quantity}`).join('，') }}</span>
+          <span v-if="selectedCoupon">已选 {{ selectedCoupon.name }}</span>
+          <span v-if="useAnnualPass">使用年卡权益预约，订单免支付</span>
         </div>
         <div class="order-total">
           <span>共 {{ booking.selectedCount }} 张</span>
-          <strong>¥{{ booking.totalAmount }}</strong>
+          <strong>¥{{ payableAmount }}</strong>
         </div>
       </section>
 

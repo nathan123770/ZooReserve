@@ -1,16 +1,36 @@
 <script setup lang="ts">
 import QRCode from 'qrcode';
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
+import { useRoute } from 'vue-router';
 import { orderApi } from '@/api/modules';
+import { useOrderStore } from '@/stores/order';
+import type { OrderRecord } from '@/types/api';
 
+const route = useRoute();
+const orderStore = useOrderStore();
 const qrUrl = ref('');
 const notice = ref('');
+const orderNo = ref('');
+const selectedOrderId = computed(() => Number(route.query.orderId || 0));
 
-onMounted(async () => {
-  const pass = await orderApi.qrcode(1);
+async function loadPass(order?: OrderRecord) {
+  const target = order ?? orderStore.orders.find((item) => item.id === selectedOrderId.value)
+    ?? orderStore.orders.find((item) => item.paymentStatus === 'PAY_SUCCESS' && item.orderStatus !== 'CHECKED_IN');
+  if (!target) return;
+  const pass = await orderApi.qrcode(target.id);
+  orderNo.value = pass.orderNo;
   notice.value = pass.entranceNotice;
   qrUrl.value = await QRCode.toDataURL(pass.qrContent, { margin: 1, width: 220 });
+}
+
+onMounted(async () => {
+  if (!orderStore.orders.length) {
+    await orderStore.loadMine();
+  }
+  await loadPass();
 });
+
+watch(() => route.query.orderId, () => loadPass());
 </script>
 
 <template>
@@ -18,12 +38,13 @@ onMounted(async () => {
     <div class="section-heading">
       <p class="eyebrow">Entry Pass</p>
       <h2>入园凭证</h2>
-      <span>二维码电子票和入园须知集中展示。</span>
+      <span>已支付订单可生成二维码，核销后状态会同步到订单。</span>
     </div>
-    <div class="pass-card">
-      <img v-if="qrUrl" :src="qrUrl" alt="入园二维码" />
-      <strong>ZR202606010001</strong>
+    <div v-if="qrUrl" class="pass-card">
+      <img :src="qrUrl" alt="入园二维码" />
+      <strong>{{ orderNo }}</strong>
       <span>{{ notice }}</span>
     </div>
+    <el-empty v-else description="暂无可入园的已支付订单" />
   </section>
 </template>

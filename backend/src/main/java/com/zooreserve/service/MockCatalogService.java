@@ -3,37 +3,83 @@ package com.zooreserve.service;
 import com.zooreserve.dto.ActivityDtos.ActivityResponse;
 import com.zooreserve.dto.TicketDtos.TicketInventoryResponse;
 import com.zooreserve.dto.TicketDtos.TicketTypeResponse;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
-import java.math.BigDecimal;
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.util.List;
 
 @Service
 public class MockCatalogService {
+  private final JdbcTemplate jdbcTemplate;
+
+  public MockCatalogService(JdbcTemplate jdbcTemplate) {
+    this.jdbcTemplate = jdbcTemplate;
+  }
 
   public List<TicketTypeResponse> ticketTypes() {
-    return List.of(
-        new TicketTypeResponse("ADULT", "成人票", new BigDecimal("120.00"), "18 周岁以上游客", false),
-        new TicketTypeResponse("CHILD", "儿童票", new BigDecimal("60.00"), "1.2 米至 1.5 米儿童", false),
-        new TicketTypeResponse("SENIOR", "老人票", new BigDecimal("60.00"), "65 周岁以上游客", false),
-        new TicketTypeResponse("ANNUAL", "亲子年卡", new BigDecimal("699.00"), "两大一小全年畅游", true)
-    );
+    return jdbcTemplate.query("""
+        SELECT code, name, price, description
+        FROM ticket_type
+        WHERE status = 'ENABLED'
+        ORDER BY id
+        """, (rs, rowNum) -> new TicketTypeResponse(
+        rs.getString("code"),
+        rs.getString("name"),
+        rs.getBigDecimal("price"),
+        rs.getString("description"),
+        "ANNUAL".equals(rs.getString("code"))));
   }
 
   public List<TicketInventoryResponse> inventory(LocalDate date, String session) {
     String normalizedSession = session == null || session.isBlank() ? "AM" : session;
-    return ticketTypes().stream()
-        .map(type -> new TicketInventoryResponse(date, normalizedSession, type.code(), 800, "ANNUAL".equals(type.code()) ? 99 : 520))
-        .toList();
+    return jdbcTemplate.query("""
+        SELECT ti.visit_date, ti.session_code, tt.code, ti.capacity, ti.remaining
+        FROM ticket_inventory ti
+        JOIN ticket_type tt ON tt.id = ti.ticket_type_id
+        WHERE ti.visit_date = ? AND ti.session_code = ? AND tt.status = 'ENABLED'
+        ORDER BY tt.id
+        """, (rs, rowNum) -> new TicketInventoryResponse(
+        rs.getDate("visit_date").toLocalDate(),
+        rs.getString("session_code"),
+        rs.getString("code"),
+        rs.getInt("capacity"),
+        rs.getInt("remaining")), date, normalizedSession);
   }
 
   public List<ActivityResponse> activities() {
-    return List.of(
-        new ActivityResponse(1L, "长颈鹿科普讲解", "科普讲解", LocalDateTime.of(2026, 6, 1, 10, 0), 40, 18, "草食动物区"),
-        new ActivityResponse(2L, "小小饲养员亲子课堂", "亲子课堂", LocalDateTime.of(2026, 6, 1, 14, 30), 24, 21, "自然教育中心"),
-        new ActivityResponse(3L, "夏夜动物园", "夜游活动", LocalDateTime.of(2026, 6, 2, 19, 0), 100, 63, "主入口集合")
-    );
+    return jdbcTemplate.query("""
+        SELECT a.id, a.title, a.category, a.start_time, a.capacity, a.location,
+               COUNT(s.id) AS signed_count
+        FROM activity a
+        LEFT JOIN activity_signup s ON s.activity_id = a.id AND s.status = 'SIGNED'
+        WHERE a.status = 'PUBLISHED'
+        GROUP BY a.id, a.title, a.category, a.start_time, a.capacity, a.location
+        ORDER BY a.start_time
+        """, (rs, rowNum) -> new ActivityResponse(
+        rs.getLong("id"),
+        rs.getString("title"),
+        rs.getString("category"),
+        rs.getTimestamp("start_time").toLocalDateTime(),
+        rs.getInt("capacity"),
+        rs.getInt("signed_count"),
+        rs.getString("location")));
+  }
+
+  public void signup(Long activityId, Long userId) {
+    Integer existing = jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM activity_signup WHERE activity_id = ? AND user_id = ?",
+        Integer.class, activityId, userId);
+    if (existing != null && existing > 0) {
+      return;
+    }
+    Integer capacity = jdbcTemplate.queryForObject("SELECT capacity FROM activity WHERE id = ?", Integer.class, activityId);
+    Integer signed = jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM activity_signup WHERE activity_id = ? AND status = 'SIGNED'",
+        Integer.class, activityId);
+    if (capacity == null || signed == null || signed >= capacity) {
+      throw new IllegalStateException("活动名额不足");
+    }
+    jdbcTemplate.update("INSERT INTO activity_signup (activity_id, user_id, status) VALUES (?, ?, 'SIGNED')", activityId, userId);
   }
 }
