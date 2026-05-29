@@ -1,5 +1,22 @@
 USE zoo_reserve;
 
+CREATE TABLE IF NOT EXISTS daily_ticket_inventory (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  visit_date DATE NOT NULL,
+  ticket_type_id BIGINT NOT NULL,
+  capacity INT NOT NULL,
+  remaining INT NOT NULL,
+  UNIQUE KEY uk_daily_inventory (visit_date, ticket_type_id)
+);
+
+INSERT INTO daily_ticket_inventory (visit_date, ticket_type_id, capacity, remaining)
+SELECT ti.visit_date, ti.ticket_type_id, SUM(ti.capacity), SUM(ti.remaining)
+FROM ticket_inventory ti
+LEFT JOIN daily_ticket_inventory di
+  ON di.visit_date = ti.visit_date AND di.ticket_type_id = ti.ticket_type_id
+WHERE di.id IS NULL
+GROUP BY ti.visit_date, ti.ticket_type_id;
+
 SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'reservation_order' AND COLUMN_NAME = 'order_type') = 0, 'ALTER TABLE reservation_order ADD COLUMN order_type VARCHAR(32) NOT NULL DEFAULT ''TICKET''', 'SELECT 1');
 PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'reservation_order' AND COLUMN_NAME = 'original_amount') = 0, 'ALTER TABLE reservation_order ADD COLUMN original_amount DECIMAL(10,2) NOT NULL DEFAULT 0', 'SELECT 1');

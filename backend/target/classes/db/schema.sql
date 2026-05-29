@@ -69,6 +69,15 @@ CREATE TABLE IF NOT EXISTS ticket_inventory (
   UNIQUE KEY uk_inventory (visit_date, session_code, ticket_type_id)
 );
 
+CREATE TABLE IF NOT EXISTS daily_ticket_inventory (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  visit_date DATE NOT NULL,
+  ticket_type_id BIGINT NOT NULL,
+  capacity INT NOT NULL,
+  remaining INT NOT NULL,
+  UNIQUE KEY uk_daily_inventory (visit_date, ticket_type_id)
+);
+
 CREATE TABLE IF NOT EXISTS reservation_order (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   order_no VARCHAR(64) NOT NULL UNIQUE,

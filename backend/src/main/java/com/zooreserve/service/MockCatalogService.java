@@ -34,9 +34,12 @@ public class MockCatalogService {
   public List<TicketInventoryResponse> inventory(LocalDate date, String session) {
     String normalizedSession = session == null || session.isBlank() ? "AM" : session;
     return jdbcTemplate.query("""
-        SELECT ti.visit_date, ti.session_code, tt.code, ti.capacity, ti.remaining
+        SELECT ti.visit_date, ti.session_code, tt.code, ti.capacity, ti.remaining,
+               COALESCE(di.capacity, ti.capacity) AS daily_capacity,
+               COALESCE(di.remaining, ti.remaining) AS daily_remaining
         FROM ticket_inventory ti
         JOIN ticket_type tt ON tt.id = ti.ticket_type_id
+        LEFT JOIN daily_ticket_inventory di ON di.ticket_type_id = ti.ticket_type_id AND di.visit_date = ti.visit_date
         WHERE ti.visit_date = ? AND ti.session_code = ? AND tt.status = 'ENABLED'
         ORDER BY tt.id
         """, (rs, rowNum) -> new TicketInventoryResponse(
@@ -44,7 +47,9 @@ public class MockCatalogService {
         rs.getString("session_code"),
         rs.getString("code"),
         rs.getInt("capacity"),
-        rs.getInt("remaining")), date, normalizedSession);
+        rs.getInt("remaining"),
+        rs.getInt("daily_capacity"),
+        rs.getInt("daily_remaining")), date, normalizedSession);
   }
 
   public List<ActivityResponse> activities() {

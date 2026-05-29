@@ -2,6 +2,8 @@ package com.zooreserve.controller;
 
 import com.zooreserve.common.ApiResponse;
 import com.zooreserve.common.PageResult;
+import com.zooreserve.dto.CheckinDtos.CheckinResponse;
+import com.zooreserve.dto.CheckinDtos.ManualCheckinRequest;
 import com.zooreserve.dto.AdminDtos.DashboardSummary;
 import com.zooreserve.service.AdminMockService;
 import com.zooreserve.service.MockOrderService;
@@ -49,7 +51,9 @@ public class AdminController {
 
   @PostMapping("/refunds/{id}/approve")
   public ApiResponse<Map<String, Object>> approveRefund(@PathVariable Long id) {
-    return ApiResponse.ok(orderService.approveRefund(id));
+    Map<String, Object> result = orderService.approveRefund(id);
+    adminMockService.logOperation("APPROVE_REFUND", "refund:" + id, "后台审核退款");
+    return ApiResponse.ok(result);
   }
 
   @PostMapping({"/activities", "/animals", "/marketing", "/system", "/notices"})
@@ -60,7 +64,7 @@ public class AdminController {
 
   @GetMapping({"/tickets", "/activities", "/animals", "/notices", "/users", "/marketing", "/checkins", "/system"})
   public ApiResponse<PageResult<Map<String, Object>>> listResource(HttpServletRequest request) {
-    return ApiResponse.ok(adminMockService.records(domainFrom(request)));
+    return ApiResponse.ok(adminMockService.records(domainFrom(request), request.getParameterMap()));
   }
 
   @PutMapping({"/tickets/{id}", "/activities/{id}", "/animals/{id}", "/marketing/{id}", "/system/{id}"})
@@ -70,12 +74,18 @@ public class AdminController {
     return ApiResponse.ok(adminMockService.update(domainFromNested(request), id, payload));
   }
 
-  @PutMapping({"/tickets/{id}/status", "/activities/{id}/status", "/animals/{id}/status", "/system/{id}/status"})
+  @PutMapping({"/tickets/{id}/status", "/activities/{id}/status", "/animals/{id}/status", "/marketing/{id}/status", "/system/{id}/status"})
   public ApiResponse<Map<String, Object>> updateStatus(@PathVariable Long id,
                                                        @RequestBody Map<String, Object> payload,
                                                        HttpServletRequest request) {
-    return ApiResponse.ok(adminMockService.toggleStatus(domainFromNestedStatus(request), id,
-        String.valueOf(payload.getOrDefault("status", "ENABLED"))));
+    return ApiResponse.ok(adminMockService.toggleStatus(domainFromNestedStatus(request), id, payload));
+  }
+
+  @PostMapping("/checkins/manual")
+  public ApiResponse<CheckinResponse> manualCheckin(@RequestBody ManualCheckinRequest request) {
+    CheckinResponse response = orderService.manual(request);
+    adminMockService.logOperation("MANUAL_CHECKIN", response.orderNo(), "后台人工核销");
+    return ApiResponse.ok(response);
   }
 
   @GetMapping("/logs")

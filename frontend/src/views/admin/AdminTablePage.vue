@@ -1,3 +1,28 @@
+<script lang="ts">
+export type InventoryPayloadInput = {
+  visitDate?: unknown;
+  session?: unknown;
+  ticketTypeCode?: unknown;
+  code?: unknown;
+  dailyCapacity?: unknown;
+  dailyRemaining?: unknown;
+  capacity?: unknown;
+  remaining?: unknown;
+};
+
+export function buildInventoryPayload(row: InventoryPayloadInput) {
+  return {
+    visitDate: String(row.visitDate ?? new Date().toISOString().slice(0, 10)),
+    session: String(row.session ?? 'AM'),
+    ticketTypeCode: String(row.ticketTypeCode ?? row.code ?? ''),
+    dailyCapacity: Number(row.dailyCapacity ?? row.capacity ?? 0),
+    dailyRemaining: Number(row.dailyRemaining ?? row.remaining ?? 0),
+    capacity: Number(row.capacity ?? 0),
+    remaining: Number(row.remaining ?? 0),
+  };
+}
+</script>
+
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
@@ -5,16 +30,18 @@ import { Download, Filter, Plus, RefreshCw, Search } from 'lucide-vue-next';
 import { adminApi } from '@/api/modules';
 import { toast } from '@/utils/message';
 import { getAdminModule } from './adminModules';
-import type { AdminFormField } from './adminModules';
+import type { AdminFormField, AdminRowAction } from './adminModules';
 
 const route = useRoute();
 const loading = ref(false);
 const drawerVisible = ref(false);
 const inventoryDialogVisible = ref(false);
+const manualCheckinVisible = ref(false);
 const editingRecord = ref<Record<string, unknown> | null>(null);
 const activeInventoryRow = ref<Record<string, unknown> | null>(null);
 const formModel = reactive<Record<string, unknown>>({});
-const inventoryForm = reactive({ capacity: 0, remaining: 0 });
+const inventoryForm = reactive({ visitDate: '', session: 'AM', ticketTypeCode: '', dailyCapacity: 0, dailyRemaining: 0, capacity: 0, remaining: 0 });
+const manualCheckinForm = reactive({ orderNo: '', phone: '', checkerId: 1, remark: '后台人工核销' });
 const filters = reactive<Record<string, string>>({});
 
 const domain = computed(() => route.meta.domain as string);
@@ -28,16 +55,24 @@ function resetData() {
   allRecords.value = [];
   selectedRows.value = [];
   for (const filter of moduleConfig.value.filters) {
-    filters[filter.key] = '';
+    filters[filter.key] = filter.key === 'session' ? 'AM' : (filter.key === 'visitDate' ? '2026-06-01' : '');
   }
+}
+
+function queryParams() {
+  const params: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(filters)) {
+    if (value && ['visitDate', 'session'].includes(key)) params[key] = value;
+  }
+  return params;
 }
 
 async function loadRecords() {
   loading.value = true;
   try {
-    const page = await adminApi.records(domain.value);
+    const page = await adminApi.records(domain.value, queryParams());
     allRecords.value = page.records.map((record) => ({ ...(record as Record<string, unknown>) }));
-    records.value = allRecords.value.map((record) => ({ ...record }));
+    applyFilters();
   } finally {
     loading.value = false;
   }
@@ -45,9 +80,9 @@ async function loadRecords() {
 
 function statusType(status: unknown) {
   const text = String(status);
-  if (['ENABLED', 'PUBLISHED', 'VISIBLE', 'PAID', 'CHECKED_IN', 'PAY_SUCCESS', '投放中', '启用', '展示中'].includes(text)) return 'success';
-  if (['PENDING_PAYMENT', 'UNPAID', 'DRAFT', 'NOT_CHECKED', '待支付', '草稿', '未核销'].includes(text)) return 'warning';
-  if (['DISABLED', 'EXCEPTION', 'REFUNDING', 'LOCKED', '停用', '异常核销', '退款中'].includes(text)) return 'danger';
+  if (['ENABLED', 'PUBLISHED', 'VISIBLE', 'PAID', 'CHECKED_IN', 'PAY_SUCCESS', 'REFUNDED'].includes(text)) return 'success';
+  if (['PENDING_PAYMENT', 'UNPAID', 'DRAFT', 'NOT_CHECKED', 'REFUNDING'].includes(text)) return 'warning';
+  if (['DISABLED', 'EXCEPTION', 'LOCKED', 'CANCELLED', 'HIDDEN'].includes(text)) return 'danger';
   return 'info';
 }
 
@@ -57,7 +92,7 @@ function applyFilters() {
   records.value = allRecords.value.filter((record) => {
     const text = Object.values(record).join(' ');
     const keywordMatched = !keyword || text.includes(keyword);
-    const statusMatched = !status || record.status === status;
+    const statusMatched = !status || record.status === status || record.paymentStatus === status;
     return keywordMatched && statusMatched;
   });
 }
@@ -68,19 +103,28 @@ function resetFilters() {
 }
 
 function openCreate() {
+  if (!moduleConfig.value.canCreate) return;
   editingRecord.value = null;
   for (const field of moduleConfig.value.formFields) {
-    formModel[field.key] = field.type === 'number' ? 0 : '';
+    formModel[field.key] = defaultValueFor(field);
   }
   drawerVisible.value = true;
 }
 
 function openEdit(row: Record<string, unknown>) {
+  if (!moduleConfig.value.canEdit && domain.value !== 'orders' && domain.value !== 'checkins') return;
   editingRecord.value = row;
   for (const field of moduleConfig.value.formFields) {
-    formModel[field.key] = row[field.key] ?? '';
+    formModel[field.key] = row[field.key] ?? defaultValueFor(field);
   }
   drawerVisible.value = true;
+}
+
+function defaultValueFor(field: AdminFormField) {
+  if (field.type === 'number') return 0;
+  if (field.type === 'datetime') return new Date().toISOString().slice(0, 16).replace('T', ' ');
+  if (field.key === 'resourceType') return 'COUPON';
+  return '';
 }
 
 async function submitForm() {
@@ -88,9 +132,9 @@ async function submitForm() {
   for (const field of moduleConfig.value.formFields) {
     payload[field.key] = formModel[field.key];
   }
-  if (editingRecord.value) {
+  if (editingRecord.value && moduleConfig.value.canEdit) {
     await adminApi.update(domain.value, Number(editingRecord.value.id), payload);
-  } else {
+  } else if (moduleConfig.value.canCreate) {
     await adminApi.create(domain.value, payload);
   }
   drawerVisible.value = false;
@@ -104,52 +148,89 @@ function placeholderFor(field: AdminFormField) {
 
 function openInventory(row: Record<string, unknown>) {
   activeInventoryRow.value = row;
-  inventoryForm.capacity = Number(row.capacity ?? 0);
-  inventoryForm.remaining = Number(row.remaining ?? 0);
+  const payload = buildInventoryPayload(row);
+  Object.assign(inventoryForm, payload);
   inventoryDialogVisible.value = true;
 }
 
 async function saveInventory() {
-  if (activeInventoryRow.value) {
-    await adminApi.updateInventory({
-      visitDate: activeInventoryRow.value.visitDate ?? new Date().toISOString().slice(0, 10),
-      session: activeInventoryRow.value.session ?? 'AM',
-      ticketTypeCode: activeInventoryRow.value.ticketTypeCode ?? activeInventoryRow.value.code,
-      capacity: inventoryForm.capacity,
-      remaining: inventoryForm.remaining,
-    });
-  }
+  await adminApi.updateInventory(buildInventoryPayload(inventoryForm));
   inventoryDialogVisible.value = false;
   await loadRecords();
   toast.success('库存已更新');
 }
 
-async function toggleRowStatus(row: Record<string, unknown>) {
+function nextStatus(row: Record<string, unknown>) {
   const current = String(row.status ?? '');
-  const nextStatus = ['ENABLED', 'PUBLISHED', 'VISIBLE', '启用', '展示中'].includes(current) ? 'DISABLED' : 'ENABLED';
-  await adminApi.toggleStatus(domain.value, Number(row.id), nextStatus);
-  await loadRecords();
-  toast.success(`状态已更新为 ${nextStatus}`);
+  if (domain.value === 'activities') return current === 'PUBLISHED' ? 'DISABLED' : 'PUBLISHED';
+  if (domain.value === 'animals') return current === 'VISIBLE' ? 'HIDDEN' : 'VISIBLE';
+  if (domain.value === 'marketing') return current === 'ENABLED' || current === 'PUBLISHED' ? 'DISABLED' : (row.resourceType === 'NOTICE' ? 'PUBLISHED' : 'ENABLED');
+  return current === 'ENABLED' ? 'DISABLED' : 'ENABLED';
 }
 
-async function handleRowAction(action: string, row: Record<string, unknown>) {
-  if (action.includes('编辑') || action.includes('详情')) {
+async function toggleRowStatus(row: Record<string, unknown>) {
+  await adminApi.toggleStatusWithPayload(domain.value, Number(row.id), {
+    status: nextStatus(row),
+    resourceType: row.resourceType,
+    type: row.type,
+  });
+  await loadRecords();
+  toast.success('状态已更新');
+}
+
+async function approveRefund(row: Record<string, unknown>) {
+  if (!row.refundId) {
+    toast.warning('该订单暂无可审核退款');
+    return;
+  }
+  await adminApi.approveRefund(Number(row.refundId));
+  await loadRecords();
+  toast.success('退款已审核');
+}
+
+function openManualCheckin() {
+  manualCheckinVisible.value = true;
+}
+
+async function submitManualCheckin() {
+  await adminApi.manualCheckin({ ...manualCheckinForm });
+  manualCheckinVisible.value = false;
+  await loadRecords();
+  toast.success('人工核销成功');
+}
+
+async function handleRowAction(action: AdminRowAction, row: Record<string, unknown>) {
+  if (action.key === 'edit' || action.key === 'view') {
     openEdit(row);
     return;
   }
-  if (action.includes('库存')) {
+  if (action.key === 'inventory') {
     openInventory(row);
     return;
   }
-  if (action.includes('停用') || action.includes('启用')) {
+  if (action.key === 'toggleStatus') {
     await toggleRowStatus(row);
     return;
   }
-  toast.info(`${action}功能已进入处理队列`);
+  if (action.key === 'approveRefund') {
+    await approveRefund(row);
+  }
 }
 
 function exportRecords() {
-  toast.success(`已生成${moduleConfig.value.title}导出任务`);
+  const columns = [{ prop: 'id', label: 'ID' }, ...moduleConfig.value.columns];
+  const csv = [
+    columns.map((column) => column.label).join(','),
+    ...records.value.map((record) => columns.map((column) => JSON.stringify(record[column.prop] ?? '')).join(',')),
+  ].join('\n');
+  const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `${domain.value}-${new Date().toISOString().slice(0, 10)}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
+  toast.success('已导出当前筛选结果');
 }
 
 watch(domain, () => {
@@ -171,11 +252,12 @@ watch(domain, () => {
         </div>
       </div>
       <div class="admin-module-actions">
+        <el-button v-if="domain === 'checkins'" type="primary" @click="openManualCheckin">人工核销</el-button>
         <el-button @click="exportRecords">
           <Download :size="16" />
           导出
         </el-button>
-        <el-button type="primary" @click="openCreate">
+        <el-button v-if="moduleConfig.canCreate" type="primary" @click="openCreate">
           <Plus :size="16" />
           {{ moduleConfig.primaryAction }}
         </el-button>
@@ -197,25 +279,14 @@ watch(domain, () => {
       </div>
       <el-form inline>
         <el-form-item v-for="filter in moduleConfig.filters" :key="filter.key" :label="filter.label">
-          <el-input
-            v-if="filter.type === 'text'"
-            v-model="filters[filter.key]"
-            :placeholder="filter.placeholder"
-            clearable
-          />
-          <el-select
-            v-else-if="filter.type === 'select'"
-            v-model="filters[filter.key]"
-            :placeholder="filter.placeholder ?? '请选择'"
-            clearable
-            style="width: 150px"
-          >
+          <el-input v-if="filter.type === 'text'" v-model="filters[filter.key]" :placeholder="filter.placeholder" clearable />
+          <el-select v-else-if="filter.type === 'select'" v-model="filters[filter.key]" :placeholder="filter.placeholder ?? '请选择'" clearable style="width: 150px">
             <el-option v-for="option in filter.options" :key="option" :label="option" :value="option" />
           </el-select>
           <el-date-picker v-else v-model="filters[filter.key]" value-format="YYYY-MM-DD" type="date" />
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" @click="applyFilters">
+          <el-button type="primary" @click="domain === 'tickets' ? loadRecords() : applyFilters()">
             <Search :size="16" />
             查询
           </el-button>
@@ -232,23 +303,10 @@ watch(domain, () => {
         <span>共 {{ records.length }} 条记录</span>
         <span v-if="selectedRows.length">已选择 {{ selectedRows.length }} 条</span>
       </div>
-      <el-table
-        v-loading="loading"
-        :data="records"
-        stripe
-        border
-        @selection-change="(rows: Record<string, unknown>[]) => (selectedRows = rows)"
-      >
+      <el-table v-loading="loading" :data="records" stripe border @selection-change="(rows: Record<string, unknown>[]) => (selectedRows = rows)">
         <el-table-column type="selection" width="44" />
         <el-table-column prop="id" label="ID" width="72" />
-        <el-table-column
-          v-for="column in moduleConfig.columns"
-          :key="column.prop"
-          :prop="column.prop"
-          :label="column.label"
-          :width="column.width"
-          :min-width="column.minWidth"
-        >
+        <el-table-column v-for="column in moduleConfig.columns" :key="column.prop" :prop="column.prop" :label="column.label" :width="column.width" :min-width="column.minWidth">
           <template #default="{ row }">
             <el-tag v-if="column.status" :type="statusType(row[column.prop])">{{ row[column.prop] }}</el-tag>
             <span v-else>{{ row[column.prop] }}</span>
@@ -256,14 +314,8 @@ watch(domain, () => {
         </el-table-column>
         <el-table-column label="操作" fixed="right" width="220">
           <template #default="{ row }">
-            <el-button
-              v-for="action in moduleConfig.rowActions"
-              :key="action"
-              link
-              :type="action.includes('停用') ? 'danger' : 'primary'"
-              @click="handleRowAction(action, row)"
-            >
-              {{ action }}
+            <el-button v-for="action in moduleConfig.rowActions" :key="action.key" link :type="action.variant ?? 'primary'" @click="handleRowAction(action, row)">
+              {{ action.label }}
             </el-button>
           </template>
         </el-table-column>
@@ -274,34 +326,46 @@ watch(domain, () => {
       </div>
     </section>
 
-    <el-drawer v-model="drawerVisible" :title="editingRecord ? '编辑记录' : moduleConfig.primaryAction" size="420px">
+    <el-drawer v-model="drawerVisible" :title="editingRecord ? '记录详情/编辑' : moduleConfig.primaryAction" size="420px">
       <el-form label-position="top">
         <el-form-item v-for="field in moduleConfig.formFields" :key="field.key" :label="field.label">
-          <el-input
-            v-if="field.type === 'text'"
-            v-model="formModel[field.key]"
-            :placeholder="placeholderFor(field)"
-          />
-          <el-input-number v-else-if="field.type === 'number'" v-model="formModel[field.key] as number" :min="0" />
-          <el-select v-else-if="field.type === 'select'" v-model="formModel[field.key]" placeholder="请选择">
+          <el-input v-if="field.type === 'text'" v-model="formModel[field.key]" :disabled="editingRecord && !moduleConfig.canEdit" :placeholder="placeholderFor(field)" />
+          <el-input-number v-else-if="field.type === 'number'" v-model="formModel[field.key] as number" :disabled="editingRecord && !moduleConfig.canEdit" :min="0" />
+          <el-select v-else-if="field.type === 'select'" v-model="formModel[field.key]" :disabled="editingRecord && !moduleConfig.canEdit" placeholder="请选择">
             <el-option v-for="option in field.options" :key="option" :label="option" :value="option" />
           </el-select>
-          <el-date-picker v-else-if="field.type === 'date'" v-model="formModel[field.key]" value-format="YYYY-MM-DD" type="date" />
-          <el-input v-else v-model="formModel[field.key]" type="textarea" :rows="4" :placeholder="placeholderFor(field)" />
+          <el-date-picker v-else-if="field.type === 'date'" v-model="formModel[field.key]" :disabled="editingRecord && !moduleConfig.canEdit" value-format="YYYY-MM-DD" type="date" />
+          <el-date-picker v-else-if="field.type === 'datetime'" v-model="formModel[field.key]" :disabled="editingRecord && !moduleConfig.canEdit" value-format="YYYY-MM-DD HH:mm:ss" type="datetime" />
+          <el-input v-else v-model="formModel[field.key]" :disabled="editingRecord && !moduleConfig.canEdit" type="textarea" :rows="4" :placeholder="placeholderFor(field)" />
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="drawerVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitForm">保存</el-button>
+        <el-button v-if="moduleConfig.canCreate || moduleConfig.canEdit" type="primary" @click="submitForm">保存</el-button>
       </template>
     </el-drawer>
 
     <el-dialog v-model="inventoryDialogVisible" title="调整库存" width="420px">
       <el-form label-position="top">
-        <el-form-item label="票种">
-          <el-input :model-value="activeInventoryRow?.name" disabled />
+        <el-form-item label="库存日期">
+          <el-date-picker v-model="inventoryForm.visitDate" value-format="YYYY-MM-DD" type="date" />
         </el-form-item>
-        <el-form-item label="日容量">
+        <el-form-item label="场次">
+          <el-select v-model="inventoryForm.session">
+            <el-option label="上午" value="AM" />
+            <el-option label="下午" value="PM" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="票种编码">
+          <el-input v-model="inventoryForm.ticketTypeCode" disabled />
+        </el-form-item>
+        <el-form-item label="容量">
+          <el-input-number v-model="inventoryForm.dailyCapacity" :min="0" />
+        </el-form-item>
+        <el-form-item label="当日总剩余">
+          <el-input-number v-model="inventoryForm.dailyRemaining" :min="0" :max="inventoryForm.dailyCapacity" />
+        </el-form-item>
+        <el-form-item label="场次容量">
           <el-input-number v-model="inventoryForm.capacity" :min="0" />
         </el-form-item>
         <el-form-item label="剩余库存">
@@ -311,6 +375,24 @@ watch(domain, () => {
       <template #footer>
         <el-button @click="inventoryDialogVisible = false">取消</el-button>
         <el-button type="primary" @click="saveInventory">保存库存</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="manualCheckinVisible" title="人工核销" width="420px">
+      <el-form label-position="top">
+        <el-form-item label="订单号">
+          <el-input v-model="manualCheckinForm.orderNo" placeholder="输入订单号" />
+        </el-form-item>
+        <el-form-item label="手机号">
+          <el-input v-model="manualCheckinForm.phone" placeholder="订单号为空时按手机号查找" />
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="manualCheckinForm.remark" type="textarea" :rows="3" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="manualCheckinVisible = false">取消</el-button>
+        <el-button type="primary" @click="submitManualCheckin">确认核销</el-button>
       </template>
     </el-dialog>
   </div>

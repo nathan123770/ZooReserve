@@ -88,6 +88,12 @@ class DatabaseBackedApiTest {
     Integer beforeInventory = jdbcTemplate.queryForObject(
         "SELECT remaining FROM ticket_inventory WHERE visit_date = DATE '2026-06-01' AND session_code = 'AM' AND ticket_type_id = 1",
         Integer.class);
+    Integer beforeDailyInventory = jdbcTemplate.queryForObject(
+        "SELECT remaining FROM daily_ticket_inventory WHERE visit_date = DATE '2026-06-01' AND ticket_type_id = 1",
+        Integer.class);
+    Integer beforePmInventory = jdbcTemplate.queryForObject(
+        "SELECT remaining FROM ticket_inventory WHERE visit_date = DATE '2026-06-01' AND session_code = 'PM' AND ticket_type_id = 1",
+        Integer.class);
 
     String orderJson = mockMvc.perform(post("/api/orders")
             .header("Authorization", "Bearer " + visitorToken)
@@ -104,6 +110,10 @@ class DatabaseBackedApiTest {
         .isEqualTo(1);
     assertThat(jdbcTemplate.queryForObject("SELECT remaining FROM ticket_inventory WHERE ticket_type_id = 1 AND visit_date = DATE '2026-06-01' AND session_code = 'AM'", Integer.class))
         .isEqualTo(beforeInventory - 2);
+    assertThat(jdbcTemplate.queryForObject("SELECT remaining FROM daily_ticket_inventory WHERE ticket_type_id = 1 AND visit_date = DATE '2026-06-01'", Integer.class))
+        .isEqualTo(beforeDailyInventory - 2);
+    assertThat(jdbcTemplate.queryForObject("SELECT remaining FROM ticket_inventory WHERE ticket_type_id = 1 AND visit_date = DATE '2026-06-01' AND session_code = 'PM'", Integer.class))
+        .isEqualTo(beforePmInventory);
 
     mockMvc.perform(post("/api/payments/prepay")
             .header("Authorization", "Bearer " + visitorToken)
@@ -275,17 +285,86 @@ class DatabaseBackedApiTest {
     mockMvc.perform(put("/api/admin/tickets/inventory")
             .header("Authorization", "Bearer " + adminToken)
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"visitDate\":\"2026-06-01\",\"session\":\"AM\",\"ticketTypeCode\":\"ADULT\",\"capacity\":900,\"remaining\":700}"))
+            .content("{\"visitDate\":\"2026-06-01\",\"session\":\"AM\",\"ticketTypeCode\":\"ADULT\",\"dailyCapacity\":1000,\"dailyRemaining\":800,\"capacity\":500,\"remaining\":300}"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.updated").value(true));
 
     assertThat(jdbcTemplate.queryForObject("SELECT remaining FROM ticket_inventory WHERE ticket_type_id = 1 AND visit_date = DATE '2026-06-01' AND session_code = 'AM'", Integer.class))
-        .isEqualTo(700);
+        .isEqualTo(300);
+    assertThat(jdbcTemplate.queryForObject("SELECT remaining FROM daily_ticket_inventory WHERE ticket_type_id = 1 AND visit_date = DATE '2026-06-01'", Integer.class))
+        .isEqualTo(800);
 
     mockMvc.perform(get("/api/admin/dashboard/summary")
             .header("Authorization", "Bearer " + adminToken))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.remainingCapacity", greaterThanOrEqualTo(0)));
+  }
+
+  @Test
+  void adminCoreClosureMutatesBusinessRecords() throws Exception {
+    String adminToken = tokenFor("admin", "admin123", "ADMIN");
+    String checkerToken = tokenFor("checker", "checker123", "CHECKER");
+    String visitorToken = tokenFor("visitor", "visitor123", "VISITOR");
+
+    mockMvc.perform(get("/api/admin/tickets?visitDate=2026-06-02&session=PM")
+            .header("Authorization", "Bearer " + adminToken))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.records[0]", hasKey("visitDate")))
+        .andExpect(jsonPath("$.data.records[0]", hasKey("session")))
+        .andExpect(jsonPath("$.data.records[0]", hasKey("ticketTypeCode")));
+
+    Long activityId = jdbcTemplate.queryForObject("SELECT id FROM activity ORDER BY id LIMIT 1", Long.class);
+    mockMvc.perform(put("/api/admin/activities/" + activityId)
+            .header("Authorization", "Bearer " + adminToken)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"title\":\"后台闭环活动\",\"category\":\"科普讲解\",\"startTime\":\"2026-06-06 09:45:00\",\"capacity\":33,\"location\":\"自然课堂\",\"status\":\"PUBLISHED\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.title").value("后台闭环活动"))
+        .andExpect(jsonPath("$.data.startTime").value("2026-06-06 09:45:00"));
+
+    mockMvc.perform(post("/api/admin/marketing")
+            .header("Authorization", "Bearer " + adminToken)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"name\":\"闭环优惠券\",\"type\":\"COUPON\",\"discountValue\":15,\"thresholdAmount\":100,\"totalQuantity\":50,\"status\":\"ENABLED\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.name").value("闭环优惠券"));
+    Long couponId = jdbcTemplate.queryForObject("SELECT id FROM coupon WHERE name = '闭环优惠券'", Long.class);
+    mockMvc.perform(put("/api/admin/marketing/" + couponId)
+            .header("Authorization", "Bearer " + adminToken)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"name\":\"闭环优惠券改\",\"type\":\"COUPON\",\"discountValue\":20,\"thresholdAmount\":120,\"totalQuantity\":60,\"status\":\"ENABLED\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.name").value("闭环优惠券改"));
+    mockMvc.perform(put("/api/admin/marketing/" + couponId + "/status")
+            .header("Authorization", "Bearer " + adminToken)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"status\":\"DISABLED\",\"type\":\"COUPON\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.status").value("DISABLED"));
+
+    String orderJson = mockMvc.perform(post("/api/orders")
+            .header("Authorization", "Bearer " + visitorToken)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"visitDate\":\"2026-06-02\",\"session\":\"PM\",\"items\":[{\"ticketTypeCode\":\"ADULT\",\"quantity\":1}]}"))
+        .andExpect(status().isOk())
+        .andReturn()
+        .getResponse()
+        .getContentAsString();
+    String orderNo = orderJson.split("\"orderNo\":\"")[1].split("\"")[0];
+    mockMvc.perform(post("/api/payments/prepay")
+            .header("Authorization", "Bearer " + visitorToken)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"orderNo\":\"" + orderNo + "\",\"channel\":\"MOCK\"}"))
+        .andExpect(status().isOk());
+    mockMvc.perform(post("/api/admin/checkins/manual")
+            .header("Authorization", "Bearer " + adminToken)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"orderNo\":\"" + orderNo + "\",\"checkerId\":2,\"remark\":\"后台人工核销\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.checkinStatus").value("CHECKED_IN"));
+
+    assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM checkin_record cr JOIN reservation_order ro ON ro.id = cr.order_id WHERE ro.order_no = ?", Integer.class, orderNo))
+        .isEqualTo(1);
   }
 
   private String tokenFor(String username, String password, String role) throws Exception {

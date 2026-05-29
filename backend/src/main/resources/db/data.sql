@@ -106,6 +106,11 @@ CROSS JOIN (
 CROSS JOIN ticket_type tt
 WHERE tt.status = 'ENABLED';
 
+INSERT IGNORE INTO daily_ticket_inventory (visit_date, ticket_type_id, capacity, remaining)
+SELECT visit_date, ticket_type_id, SUM(capacity), SUM(remaining)
+FROM ticket_inventory
+GROUP BY visit_date, ticket_type_id;
+
 INSERT INTO activity (title, category, start_time, capacity, location, status)
 SELECT '长颈鹿科普讲解', '科普讲解', '2026-06-01 10:00:00', 40, '草食动物区', 'PUBLISHED'
 WHERE NOT EXISTS (SELECT 1 FROM activity WHERE title = '长颈鹿科普讲解' AND start_time = '2026-06-01 10:00:00');

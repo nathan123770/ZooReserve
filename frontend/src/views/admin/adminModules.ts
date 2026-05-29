@@ -35,8 +35,14 @@ export interface AdminColumn {
 export interface AdminFormField {
   key: string;
   label: string;
-  type: 'text' | 'number' | 'select' | 'date' | 'textarea';
+  type: 'text' | 'number' | 'select' | 'date' | 'datetime' | 'textarea';
   options?: string[];
+}
+
+export interface AdminRowAction {
+  key: string;
+  label: string;
+  variant?: 'primary' | 'success' | 'warning' | 'danger' | 'info';
 }
 
 export interface AdminModuleConfig {
@@ -45,181 +51,219 @@ export interface AdminModuleConfig {
   subtitle: string;
   icon: Component;
   primaryAction: string;
+  canCreate: boolean;
+  canEdit: boolean;
+  canStatus: boolean;
   metrics: AdminMetric[];
   filters: AdminFilter[];
   columns: AdminColumn[];
   records: Record<string, unknown>[];
   formFields: AdminFormField[];
-  rowActions: string[];
+  rowActions: AdminRowAction[];
 }
 
+const statusOptions = ['ENABLED', 'DISABLED'];
 const commonFilters: AdminFilter[] = [
   { key: 'keyword', label: '关键词', type: 'text', placeholder: '输入名称、编号或手机号' },
-  { key: 'status', label: '状态', type: 'select', placeholder: '全部状态', options: ['启用', '草稿', '待审核', '已停用'] },
+  { key: 'status', label: '状态', type: 'select', placeholder: '全部状态', options: ['ENABLED', 'DISABLED', 'PUBLISHED', 'VISIBLE', 'CHECKED_IN'] },
 ];
 
 export const adminModules: Record<string, AdminModuleConfig> = {
   tickets: {
     domain: 'tickets',
     title: '票务管理',
-    subtitle: '维护票种、价格、日期库存、场次和节假日规则。',
+    subtitle: '按日期和场次维护票种、价格与库存，避免聚合库存误改。',
     icon: Ticket,
     primaryAction: '新增票种',
+    canCreate: true,
+    canEdit: true,
+    canStatus: true,
     metrics: [
-      { label: '在售票种', value: '12', trend: '较昨日 +2' },
-      { label: '今日余票', value: '1,780', trend: '上午场充足' },
-      { label: '节假日规则', value: '6', trend: '国庆规则已发布' },
+      { label: '在售票种', value: '3', trend: '普通票独立管理' },
+      { label: '库存维度', value: '日期/场次', trend: '上午、下午分开' },
+      { label: '库存闭环', value: '已接入', trend: '游客端同步读取' },
     ],
     filters: [
       ...commonFilters,
-      { key: 'date', label: '库存日期', type: 'date' },
+      { key: 'visitDate', label: '库存日期', type: 'date' },
+      { key: 'session', label: '场次', type: 'select', options: ['AM', 'PM'] },
     ],
     columns: [
       { prop: 'code', label: '票种编码', width: 120 },
       { prop: 'name', label: '票种名称', minWidth: 140 },
-      { prop: 'price', label: '价格', width: 110 },
-      { prop: 'capacity', label: '日容量', width: 100 },
-      { prop: 'remaining', label: '剩余库存', width: 110 },
+      { prop: 'price', label: '价格', width: 100 },
+      { prop: 'visitDate', label: '库存日期', width: 120 },
+      { prop: 'session', label: '场次', width: 90 },
+      { prop: 'dailyCapacity', label: '当日总容量', width: 120 },
+      { prop: 'dailyRemaining', label: '当日总剩余', width: 120 },
+      { prop: 'capacity', label: '容量', width: 90 },
+      { prop: 'remaining', label: '剩余', width: 90 },
       { prop: 'status', label: '状态', width: 110, status: true },
     ],
     records: [
-      { id: 1, code: 'ADULT', name: '成人票', price: '¥120', capacity: 1200, remaining: 520, status: '启用' },
-      { id: 2, code: 'CHILD', name: '儿童票', price: '¥60', capacity: 700, remaining: 318, status: '启用' },
-      { id: 3, code: 'ANNUAL', name: '亲子年卡', price: '¥699', capacity: 120, remaining: 42, status: '启用' },
+      { id: 1, code: 'ADULT', name: '成人票', price: 120, visitDate: '2026-06-01', session: 'AM', dailyCapacity: 1200, dailyRemaining: 1040, capacity: 600, remaining: 520, status: 'ENABLED' },
+      { id: 2, code: 'CHILD', name: '儿童票', price: 60, visitDate: '2026-06-01', session: 'AM', dailyCapacity: 700, dailyRemaining: 618, capacity: 350, remaining: 318, status: 'ENABLED' },
+      { id: 3, code: 'SENIOR', name: '老人票', price: 60, visitDate: '2026-06-01', session: 'AM', dailyCapacity: 600, dailyRemaining: 396, capacity: 300, remaining: 198, status: 'ENABLED' },
     ],
     formFields: [
+      { key: 'code', label: '票种编码', type: 'text' },
       { key: 'name', label: '票种名称', type: 'text' },
       { key: 'price', label: '价格', type: 'number' },
-      { key: 'capacity', label: '日容量', type: 'number' },
-      { key: 'status', label: '状态', type: 'select', options: ['启用', '草稿', '已停用'] },
+      { key: 'status', label: '状态', type: 'select', options: statusOptions },
       { key: 'description', label: '说明', type: 'textarea' },
     ],
-    rowActions: ['编辑', '库存', '停用'],
+    rowActions: [
+      { key: 'edit', label: '编辑' },
+      { key: 'inventory', label: '库存', variant: 'warning' },
+      { key: 'toggleStatus', label: '启停', variant: 'danger' },
+    ],
   },
   orders: {
     domain: 'orders',
     title: '订单管理',
-    subtitle: '查询预约订单、支付状态、退款审核和异常订单。',
+    subtitle: '查询预约订单、支付状态和退款记录，退款审核形成真实业务结果。',
     icon: ClipboardCheck,
-    primaryAction: '导出订单',
+    primaryAction: '新增订单',
+    canCreate: false,
+    canEdit: false,
+    canStatus: false,
     metrics: [
-      { label: '今日订单', value: '386', trend: '支付率 93%' },
-      { label: '待支付', value: '24', trend: '需关注超时取消' },
-      { label: '退款中', value: '9', trend: '平均处理 18 分钟' },
+      { label: '订单列表', value: '实时', trend: '来自 reservation_order' },
+      { label: '退款审核', value: '已接入', trend: '调用退款审批接口' },
+      { label: '导出', value: 'CSV', trend: '导出当前筛选结果' },
     ],
     filters: [
-      { key: 'keyword', label: '订单/手机号', type: 'text', placeholder: '订单号、手机号、游客姓名' },
-      { key: 'status', label: '订单状态', type: 'select', options: ['待支付', '已预约', '已入园', '退款中', '已退款'] },
-      { key: 'date', label: '预约日期', type: 'date' },
+      { key: 'keyword', label: '订单/手机号', type: 'text', placeholder: '订单号、手机号、游客' },
+      { key: 'status', label: '订单状态', type: 'select', options: ['PENDING_PAYMENT', 'PAID', 'CHECKED_IN', 'REFUNDING', 'REFUNDED', 'CANCELLED'] },
+      { key: 'visitDate', label: '预约日期', type: 'date' },
     ],
     columns: [
       { prop: 'orderNo', label: '订单号', minWidth: 160 },
-      { prop: 'visitor', label: '联系人', width: 110 },
+      { prop: 'visitor', label: '游客', width: 110 },
       { prop: 'phone', label: '手机号', width: 130 },
       { prop: 'visitDate', label: '预约日期', width: 120 },
       { prop: 'amount', label: '金额', width: 100 },
-      { prop: 'status', label: '状态', width: 110, status: true },
+      { prop: 'paymentStatus', label: '支付', width: 120, status: true },
+      { prop: 'status', label: '订单状态', width: 120, status: true },
     ],
     records: [
-      { id: 1, orderNo: 'ZR202606010001', visitor: '林女士', phone: '13800001234', visitDate: '2026-06-01', amount: '¥240', status: '已预约' },
-      { id: 2, orderNo: 'ZR202606010029', visitor: '陈先生', phone: '13900004567', visitDate: '2026-06-01', amount: '¥360', status: '待支付' },
-      { id: 3, orderNo: 'ZR202606010102', visitor: '王同学', phone: '13700008888', visitDate: '2026-06-02', amount: '¥60', status: '退款中' },
+      { id: 1, orderNo: 'ZR202606010001', visitor: 'visitor', phone: '13800001234', visitDate: '2026-06-01', amount: 240, paymentStatus: 'PAY_SUCCESS', status: 'PAID' },
+      { id: 2, orderNo: 'ZR202606010029', visitor: 'visitor', phone: '13900004567', visitDate: '2026-06-01', amount: 360, paymentStatus: 'UNPAID', status: 'PENDING_PAYMENT' },
+      { id: 3, orderNo: 'ZR202606010102', visitor: 'visitor', phone: '13700008888', visitDate: '2026-06-02', amount: 60, paymentStatus: 'PAY_SUCCESS', status: 'REFUNDING' },
     ],
     formFields: [
       { key: 'orderNo', label: '订单号', type: 'text' },
-      { key: 'status', label: '订单状态', type: 'select', options: ['待支付', '已预约', '已入园', '退款中', '已退款'] },
+      { key: 'status', label: '订单状态', type: 'select', options: ['PENDING_PAYMENT', 'PAID', 'CHECKED_IN', 'REFUNDING', 'REFUNDED'] },
       { key: 'remark', label: '处理备注', type: 'textarea' },
     ],
-    rowActions: ['详情', '退款审核', '备注'],
+    rowActions: [
+      { key: 'view', label: '详情' },
+      { key: 'approveRefund', label: '退款审核', variant: 'warning' },
+    ],
   },
   activities: {
     domain: 'activities',
     title: '活动管理',
-    subtitle: '发布科普讲解、投喂、亲子课堂和夜游活动。',
+    subtitle: '发布科普讲解、投喂、亲子课堂和夜游活动，编辑时保留开始时间。',
     icon: CalendarCheck,
     primaryAction: '发布活动',
+    canCreate: true,
+    canEdit: true,
+    canStatus: true,
     metrics: [
-      { label: '已发布活动', value: '18', trend: '本周新增 4' },
-      { label: '报名人数', value: '624', trend: '亲子课堂最热门' },
-      { label: '平均满员率', value: '78%', trend: '较上周 +8%' },
+      { label: '活动闭环', value: '已接入', trend: '游客端同步显示' },
+      { label: '报名统计', value: '实时', trend: 'activity_signup 统计' },
+      { label: '时间字段', value: '已补齐', trend: '创建/编辑保留' },
     ],
-    filters: [
-      ...commonFilters,
-      { key: 'date', label: '活动日期', type: 'date' },
-    ],
+    filters: [...commonFilters, { key: 'date', label: '活动日期', type: 'date' }],
     columns: [
       { prop: 'title', label: '活动名称', minWidth: 180 },
       { prop: 'category', label: '类型', width: 120 },
       { prop: 'startTime', label: '开始时间', width: 170 },
       { prop: 'capacity', label: '容量', width: 90 },
       { prop: 'signed', label: '报名', width: 90 },
+      { prop: 'location', label: '地点', width: 130 },
       { prop: 'status', label: '状态', width: 110, status: true },
     ],
     records: [
-      { id: 1, title: '长颈鹿科普讲解', category: '科普讲解', startTime: '2026-06-01 10:00', capacity: 40, signed: 18, status: '启用' },
-      { id: 2, title: '小小饲养员亲子课堂', category: '亲子课堂', startTime: '2026-06-01 14:30', capacity: 24, signed: 21, status: '启用' },
-      { id: 3, title: '夏夜动物园', category: '夜游活动', startTime: '2026-06-02 19:00', capacity: 100, signed: 63, status: '草稿' },
+      { id: 1, title: '长颈鹿科普讲解', category: '科普讲解', startTime: '2026-06-01 10:00:00', capacity: 40, signed: 18, location: '草食动物区', status: 'PUBLISHED' },
+      { id: 2, title: '小小饲养员亲子课堂', category: '亲子课堂', startTime: '2026-06-01 14:30:00', capacity: 24, signed: 21, location: '自然教育中心', status: 'PUBLISHED' },
+      { id: 3, title: '夏夜动物园', category: '夜游活动', startTime: '2026-06-02 19:00:00', capacity: 100, signed: 63, location: '主入口集合', status: 'DRAFT' },
     ],
     formFields: [
       { key: 'title', label: '活动名称', type: 'text' },
-      { key: 'category', label: '类型', type: 'select', options: ['科普讲解', '动物投喂', '亲子课堂', '夜游活动'] },
+      { key: 'category', label: '类型', type: 'select', options: ['科普讲解', '动物投喂', '亲子课堂', '夜游活动', '主题导览'] },
+      { key: 'startTime', label: '开始时间', type: 'datetime' },
       { key: 'capacity', label: '容量', type: 'number' },
       { key: 'location', label: '集合地点', type: 'text' },
-      { key: 'description', label: '活动介绍', type: 'textarea' },
+      { key: 'status', label: '状态', type: 'select', options: ['PUBLISHED', 'DRAFT', 'DISABLED'] },
     ],
-    rowActions: ['编辑', '报名', '签到'],
+    rowActions: [
+      { key: 'edit', label: '编辑' },
+      { key: 'toggleStatus', label: '发布/停用', variant: 'danger' },
+    ],
   },
   animals: {
     domain: 'animals',
     title: '动物展区管理',
-    subtitle: '维护动物档案、展区介绍、图片视频和导览点位。',
+    subtitle: '维护动物档案、所属展区、媒体地址和导览展示状态。',
     icon: PawPrint,
     primaryAction: '新增动物',
+    canCreate: true,
+    canEdit: true,
+    canStatus: true,
     metrics: [
-      { label: '动物档案', value: '128', trend: '12 个重点展示' },
-      { label: '展区点位', value: '32', trend: '无障碍点位 8' },
-      { label: '待更新媒体', value: '5', trend: '需要补图' },
+      { label: '动物档案', value: '真实', trend: 'animal 表' },
+      { label: '展区联动', value: '已接入', trend: 'zone 自动维护' },
+      { label: '媒体字段', value: '已保留', trend: '编辑不丢失' },
     ],
     filters: [
       { key: 'keyword', label: '动物/展区', type: 'text', placeholder: '动物名称、物种、展区' },
-      { key: 'status', label: '展示状态', type: 'select', options: ['展示中', '维护中', '隐藏'] },
+      { key: 'status', label: '展示状态', type: 'select', options: ['VISIBLE', 'HIDDEN', 'DISABLED'] },
     ],
     columns: [
       { prop: 'name', label: '名称', minWidth: 140 },
       { prop: 'species', label: '物种', minWidth: 150 },
       { prop: 'zone', label: '展区', minWidth: 140 },
-      { prop: 'media', label: '媒体', width: 100 },
+      { prop: 'media', label: '媒体地址', minWidth: 150 },
       { prop: 'guidePoint', label: '导览点位', width: 120 },
       { prop: 'status', label: '状态', width: 110, status: true },
     ],
     records: [
-      { id: 1, name: '团团', species: '大熊猫', zone: '熊猫馆', media: '6 张', guidePoint: 'P-01', status: '展示中' },
-      { id: 2, name: '星河', species: '长颈鹿', zone: '草食动物区', media: '4 张', guidePoint: 'G-03', status: '展示中' },
-      { id: 3, name: '雨林馆', species: '综合展区', zone: '热带雨林', media: '12 张', guidePoint: 'R-02', status: '维护中' },
+      { id: 1, name: '团团', species: '大熊猫', zone: '熊猫馆', media: '/media/animals/panda.jpg', guidePoint: 'P-01', status: 'VISIBLE' },
+      { id: 2, name: '星河', species: '长颈鹿', zone: '草食动物区', media: '/media/animals/giraffe.jpg', guidePoint: 'G-03', status: 'VISIBLE' },
+      { id: 3, name: '雨林馆', species: '综合展区', zone: '热带雨林', media: '/media/zones/rainforest.jpg', guidePoint: 'R-02', status: 'HIDDEN' },
     ],
     formFields: [
       { key: 'name', label: '名称', type: 'text' },
       { key: 'species', label: '物种', type: 'text' },
       { key: 'zone', label: '所属展区', type: 'text' },
-      { key: 'guidePoint', label: '导览点位', type: 'text' },
+      { key: 'media', label: '媒体地址', type: 'text' },
+      { key: 'status', label: '状态', type: 'select', options: ['VISIBLE', 'HIDDEN', 'DISABLED'] },
       { key: 'description', label: '介绍', type: 'textarea' },
     ],
-    rowActions: ['编辑', '媒体', '导览'],
+    rowActions: [
+      { key: 'edit', label: '编辑' },
+      { key: 'toggleStatus', label: '展示/隐藏', variant: 'danger' },
+    ],
   },
   checkins: {
     domain: 'checkins',
     title: '核销管理',
-    subtitle: '查看二维码核销、人工核销和异常核销日志。',
+    subtitle: '查看扫码和人工核销记录，后台人工核销直接接入核销接口。',
     icon: ShieldCheck,
     primaryAction: '人工核销',
+    canCreate: false,
+    canEdit: false,
+    canStatus: false,
     metrics: [
-      { label: '今日核销', value: '219', trend: '入园率 56.7%' },
-      { label: '异常拦截', value: '7', trend: '重复核销 4' },
-      { label: '核销员在线', value: '5', trend: '主入口 3 人' },
+      { label: '核销记录', value: '实时', trend: 'checkin_record' },
+      { label: '人工核销', value: '已接入', trend: '后台动作可落库' },
+      { label: '占位按钮', value: '已移除', trend: '只保留真实动作' },
     ],
     filters: [
-      { key: 'keyword', label: '订单/核销员', type: 'text', placeholder: '订单号、手机号、核销员' },
-      { key: 'status', label: '核销状态', type: 'select', options: ['未核销', '已核销', '异常核销'] },
+      { key: 'keyword', label: '订单/核销员', type: 'text', placeholder: '订单号、核销员、备注' },
+      { key: 'status', label: '核销状态', type: 'select', options: ['CHECKED_IN', 'EXCEPTION'] },
       { key: 'date', label: '核销日期', type: 'date' },
     ],
     columns: [
@@ -231,90 +275,104 @@ export const adminModules: Record<string, AdminModuleConfig> = {
       { prop: 'status', label: '状态', width: 110, status: true },
     ],
     records: [
-      { id: 1, orderNo: 'ZR202606010001', checker: '入口核销员', people: 2, checkedAt: '2026-06-01 09:12', remark: '扫码核销', status: '已核销' },
-      { id: 2, orderNo: 'ZR202606010088', checker: '西门核销员', people: 3, checkedAt: '2026-06-01 10:03', remark: '重复扫码拦截', status: '异常核销' },
-      { id: 3, orderNo: 'ZR202606010129', checker: '入口核销员', people: 1, checkedAt: '-', remark: '等待入园', status: '未核销' },
+      { id: 1, orderNo: 'ZR202606010001', checker: '入口核销员', people: 2, checkedAt: '2026-06-01 09:12:00', remark: '扫码核销', status: 'CHECKED_IN' },
+      { id: 2, orderNo: 'ZR202606010088', checker: '西门核销员', people: 3, checkedAt: '2026-06-01 10:03:00', remark: '重复扫码拦截', status: 'EXCEPTION' },
+      { id: 3, orderNo: 'ZR202606010129', checker: '入口核销员', people: 1, checkedAt: '2026-06-01 11:03:00', remark: '人工核销', status: 'CHECKED_IN' },
     ],
     formFields: [
       { key: 'orderNo', label: '订单号', type: 'text' },
       { key: 'phone', label: '手机号', type: 'text' },
-      { key: 'remark', label: '异常备注', type: 'textarea' },
+      { key: 'remark', label: '核销备注', type: 'textarea' },
     ],
-    rowActions: ['详情', '备注', '同步'],
+    rowActions: [{ key: 'view', label: '详情' }],
   },
   marketing: {
     domain: 'marketing',
     title: '营销管理',
-    subtitle: '配置优惠券、满减、会员折扣、公告轮播和投放状态。',
+    subtitle: '区分优惠券和公告，支持创建、编辑与启停。',
     icon: Megaphone,
-    primaryAction: '新增活动',
+    primaryAction: '新增营销',
+    canCreate: true,
+    canEdit: true,
+    canStatus: true,
     metrics: [
-      { label: '进行中营销', value: '8', trend: '亲子券最活跃' },
-      { label: '优惠券领取', value: '1,246', trend: '核销率 34%' },
-      { label: '公告轮播', value: '5', trend: '2 条定时发布' },
+      { label: '优惠券', value: '可编辑', trend: '额度/门槛/库存' },
+      { label: '公告', value: '可发布', trend: '内容与状态' },
+      { label: '状态闭环', value: '已接入', trend: '启停真实落库' },
     ],
     filters: [
-      { key: 'keyword', label: '营销名称', type: 'text', placeholder: '优惠券、公告、满减名称' },
-      { key: 'status', label: '投放状态', type: 'select', options: ['投放中', '未开始', '已结束', '草稿'] },
+      { key: 'keyword', label: '营销名称', type: 'text', placeholder: '优惠券、公告名称' },
+      { key: 'status', label: '投放状态', type: 'select', options: ['ENABLED', 'DISABLED', 'PUBLISHED', 'DRAFT'] },
     ],
     columns: [
       { prop: 'name', label: '营销名称', minWidth: 170 },
-      { prop: 'type', label: '类型', width: 120 },
-      { prop: 'budget', label: '预算/库存', width: 120 },
-      { prop: 'claimed', label: '领取/触达', width: 120 },
-      { prop: 'period', label: '投放周期', minWidth: 170 },
+      { prop: 'type', label: '类型', width: 110 },
+      { prop: 'discountValue', label: '优惠额', width: 100 },
+      { prop: 'thresholdAmount', label: '门槛', width: 100 },
+      { prop: 'totalQuantity', label: '库存', width: 100 },
       { prop: 'status', label: '状态', width: 110, status: true },
     ],
     records: [
-      { id: 1, name: '六一亲子满减券', type: '满减券', budget: '5000 张', claimed: '1246', period: '05-20 至 06-10', status: '投放中' },
-      { id: 2, name: '年卡会员折扣', type: '会员折扣', budget: '不限量', claimed: '328', period: '全年', status: '投放中' },
-      { id: 3, name: '夜游公告轮播', type: '公告轮播', budget: '首页曝光', claimed: '18,920', period: '06-01 至 08-31', status: '草稿' },
+      { id: 1, name: '六一亲子满减券', type: '优惠券', resourceType: 'COUPON', discountValue: 30, thresholdAmount: 200, totalQuantity: 5000, status: 'ENABLED' },
+      { id: 2, name: '年卡会员折扣', type: '优惠券', resourceType: 'COUPON', discountValue: 20, thresholdAmount: 100, totalQuantity: 1000, status: 'ENABLED' },
+      { id: 3, name: '夜游公告轮播', type: '公告', resourceType: 'NOTICE', description: '夏夜动物园开放公告', status: 'PUBLISHED' },
     ],
     formFields: [
+      { key: 'resourceType', label: '类型', type: 'select', options: ['COUPON', 'NOTICE'] },
       { key: 'name', label: '营销名称', type: 'text' },
-      { key: 'type', label: '类型', type: 'select', options: ['优惠券', '满减券', '会员折扣', '公告轮播'] },
-      { key: 'budget', label: '预算/库存', type: 'text' },
-      { key: 'period', label: '投放周期', type: 'text' },
-      { key: 'description', label: '规则说明', type: 'textarea' },
+      { key: 'discountValue', label: '优惠金额', type: 'number' },
+      { key: 'thresholdAmount', label: '使用门槛', type: 'number' },
+      { key: 'totalQuantity', label: '发放库存', type: 'number' },
+      { key: 'status', label: '状态', type: 'select', options: ['ENABLED', 'DISABLED', 'PUBLISHED', 'DRAFT'] },
+      { key: 'description', label: '公告内容/规则说明', type: 'textarea' },
     ],
-    rowActions: ['编辑', '投放', '数据'],
+    rowActions: [
+      { key: 'edit', label: '编辑' },
+      { key: 'toggleStatus', label: '启停', variant: 'danger' },
+    ],
   },
   system: {
     domain: 'system',
     title: '系统管理',
-    subtitle: '管理后台用户、角色、权限、菜单、日志和系统参数。',
+    subtitle: '轻量维护后台账号状态；完整 RBAC 留到后续阶段。',
     icon: Settings,
     primaryAction: '新增用户',
+    canCreate: true,
+    canEdit: true,
+    canStatus: true,
     metrics: [
-      { label: '后台用户', value: '16', trend: '核销员 8 人' },
-      { label: '角色权限', value: '5', trend: 'RBAC 已启用' },
-      { label: '今日日志', value: '342', trend: '无高危操作' },
+      { label: '后台用户', value: '轻量维护', trend: '账号/状态' },
+      { label: '角色权限', value: '后续扩展', trend: '本阶段不做 RBAC' },
+      { label: '日志', value: '只读', trend: 'operation_log' },
     ],
     filters: [
-      { key: 'keyword', label: '用户/权限', type: 'text', placeholder: '用户、角色、菜单、参数' },
-      { key: 'status', label: '账号状态', type: 'select', options: ['启用', '锁定', '已停用'] },
+      { key: 'keyword', label: '用户/权限', type: 'text', placeholder: '用户、角色、权限' },
+      { key: 'status', label: '账号状态', type: 'select', options: ['ENABLED', 'LOCKED', 'DISABLED'] },
     ],
     columns: [
       { prop: 'username', label: '账号', minWidth: 140 },
       { prop: 'displayName', label: '姓名', width: 120 },
       { prop: 'role', label: '角色', width: 120 },
-      { prop: 'lastLogin', label: '最近登录', width: 170 },
+      { prop: 'lastLogin', label: '创建时间', width: 170 },
       { prop: 'scope', label: '权限范围', minWidth: 160 },
       { prop: 'status', label: '状态', width: 110, status: true },
     ],
     records: [
-      { id: 1, username: 'admin', displayName: '园区管理员', role: '管理员', lastLogin: '2026-05-28 15:30', scope: '全部菜单', status: '启用' },
-      { id: 2, username: 'checker01', displayName: '入口核销员', role: '核销员', lastLogin: '2026-05-28 09:00', scope: '核销端', status: '启用' },
-      { id: 3, username: 'ops01', displayName: '运营专员', role: '运营', lastLogin: '2026-05-27 18:12', scope: '活动/营销', status: '锁定' },
+      { id: 1, username: 'admin', displayName: '园区管理员', role: '管理员', lastLogin: '2026-05-28 15:30:00', scope: '全部菜单', status: 'ENABLED' },
+      { id: 2, username: 'checker01', displayName: '入口核销员', role: '核销员', lastLogin: '2026-05-28 09:00:00', scope: '核销站', status: 'ENABLED' },
+      { id: 3, username: 'ops01', displayName: '运营专员', role: '运营', lastLogin: '2026-05-27 18:12:00', scope: '活动/营销', status: 'LOCKED' },
     ],
     formFields: [
       { key: 'username', label: '账号', type: 'text' },
       { key: 'displayName', label: '姓名', type: 'text' },
-      { key: 'role', label: '角色', type: 'select', options: ['管理员', '运营', '核销员', '客服'] },
-      { key: 'status', label: '状态', type: 'select', options: ['启用', '锁定', '已停用'] },
+      { key: 'password', label: '初始密码', type: 'text' },
+      { key: 'status', label: '状态', type: 'select', options: ['ENABLED', 'LOCKED', 'DISABLED'] },
       { key: 'scope', label: '权限范围', type: 'textarea' },
     ],
-    rowActions: ['编辑', '授权', '日志'],
+    rowActions: [
+      { key: 'edit', label: '编辑' },
+      { key: 'toggleStatus', label: '启停', variant: 'danger' },
+    ],
   },
 };
 

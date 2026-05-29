@@ -27,8 +27,17 @@ INSERT INTO ticket_inventory (visit_date, session_code, ticket_type_id, capacity
 ('2026-06-01', 'AM', 2, 400, 300),
 ('2026-06-01', 'AM', 3, 120, 99),
 ('2026-06-01', 'PM', 1, 800, 520),
+('2026-06-02', 'PM', 1, 800, 520),
 ('2026-06-02', 'AM', 2, 400, 300),
 ('2026-06-03', 'AM', 1, 800, 520);
+
+INSERT INTO daily_ticket_inventory (visit_date, ticket_type_id, capacity, remaining) VALUES
+('2026-06-01', 1, 1600, 1040),
+('2026-06-01', 2, 400, 300),
+('2026-06-01', 3, 120, 99),
+('2026-06-02', 1, 800, 520),
+('2026-06-02', 2, 400, 300),
+('2026-06-03', 1, 800, 520);
 
 INSERT INTO visitor_profile (id, user_id, real_name, id_card_no, phone, is_default) VALUES
 (1, 1, '测试游客', '330101202605280001', '13800000001', 1),

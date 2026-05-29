@@ -15,6 +15,7 @@ DROP TABLE IF EXISTS refund_record;
 DROP TABLE IF EXISTS payment_record;
 DROP TABLE IF EXISTS order_item;
 DROP TABLE IF EXISTS reservation_order;
+DROP TABLE IF EXISTS daily_ticket_inventory;
 DROP TABLE IF EXISTS ticket_inventory;
 DROP TABLE IF EXISTS ticket_type;
 DROP TABLE IF EXISTS visitor_profile;
@@ -90,6 +91,15 @@ CREATE TABLE ticket_inventory (
   capacity INT NOT NULL,
   remaining INT NOT NULL,
   UNIQUE (visit_date, session_code, ticket_type_id)
+);
+
+CREATE TABLE daily_ticket_inventory (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  visit_date DATE NOT NULL,
+  ticket_type_id BIGINT NOT NULL,
+  capacity INT NOT NULL,
+  remaining INT NOT NULL,
+  UNIQUE (visit_date, ticket_type_id)
 );
 
 CREATE TABLE reservation_order (

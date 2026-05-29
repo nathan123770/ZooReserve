@@ -32,6 +32,8 @@ export interface TicketInventory {
   ticketTypeCode: string;
   capacity: number;
   remaining: number;
+  dailyCapacity: number;
+  dailyRemaining: number;
 }
 
 export interface OrderRecord {

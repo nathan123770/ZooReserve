@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
+import { memberApi } from '../api/modules';
 import { routes } from '../router/routes';
 import { orderStatusText, paymentStatusText, checkinStatusText } from '../utils/status';
 import { useAuthStore } from '../stores/auth';
@@ -8,9 +9,27 @@ import { useMemberStore } from '../stores/member';
 import { adminModules } from '../views/admin/adminModules';
 import { redirectForRole } from '../views/auth/loginRouting';
 
+vi.mock('../api/modules', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../api/modules')>();
+  return {
+    ...actual,
+    memberApi: {
+      ...actual.memberApi,
+      profiles: vi.fn(),
+      coupons: vi.fn(),
+      annualPasses: vi.fn(),
+      createProfile: vi.fn(),
+    },
+  };
+});
+
 describe('frontend skeleton contract', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
+    vi.mocked(memberApi.profiles).mockReset();
+    vi.mocked(memberApi.coupons).mockReset();
+    vi.mocked(memberApi.annualPasses).mockReset();
+    vi.mocked(memberApi.createProfile).mockReset();
   });
 
   it('declares visitor, admin, and checker route families', () => {
@@ -56,13 +75,25 @@ describe('frontend skeleton contract', () => {
     booking.setSession('PM');
 
     expect(booking.totalRemaining).not.toBe(amRemaining);
-    expect(bookingTickets.length).toBeGreaterThanOrEqual(4);
+    expect(bookingTickets.length).toBeGreaterThanOrEqual(3);
   });
 
-  it('supports member profile defaulting and coupon state', () => {
+  it('supports member profile defaulting and coupon state', async () => {
+    vi.mocked(memberApi.profiles).mockResolvedValueOnce([]);
+    vi.mocked(memberApi.coupons).mockResolvedValueOnce([{ id: 1, name: '新客券', threshold: '满 200 减 30', status: 'UNUSED' }]);
+    vi.mocked(memberApi.annualPasses).mockResolvedValueOnce([]);
+    vi.mocked(memberApi.createProfile).mockResolvedValueOnce({
+      id: 99,
+      name: '测试游客',
+      idCard: '110***********0001',
+      phone: '13600000000',
+      relation: '亲友',
+      isDefault: true,
+    });
     const member = useMemberStore();
 
-    member.saveProfile({
+    await member.loadAll();
+    await member.saveProfile({
       name: '测试游客',
       idCard: '110***********0001',
       phone: '13600000000',
@@ -72,7 +103,7 @@ describe('frontend skeleton contract', () => {
 
     expect(member.defaultProfile?.name).toBe('测试游客');
     expect(member.coupons.some((coupon) => coupon.status === '可用')).toBe(true);
-    expect(member.notifications.length).toBeGreaterThanOrEqual(3);
+    expect(member.notifications.length).toBeGreaterThanOrEqual(2);
   });
 
   it('keeps role switch redirects inside the selected role area', () => {

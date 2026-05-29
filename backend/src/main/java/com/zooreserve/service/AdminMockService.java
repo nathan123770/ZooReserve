@@ -9,13 +9,18 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.sql.Statement;
+import java.sql.Timestamp;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 @Service
 public class AdminMockService {
+  private static final DateTimeFormatter DATE_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
   private final JdbcTemplate jdbcTemplate;
   private final PasswordEncoder passwordEncoder;
 
@@ -28,7 +33,7 @@ public class AdminMockService {
     Long todayReservations = count("SELECT COUNT(*) FROM reservation_order WHERE visit_date = ?", LocalDate.now());
     BigDecimal paidAmount = jdbcTemplate.queryForObject("SELECT COALESCE(SUM(amount), 0) FROM payment_record WHERE status = 'PAY_SUCCESS'", BigDecimal.class);
     Long checkedInPeople = count("SELECT COALESCE(SUM(oi.quantity), 0) FROM checkin_record cr JOIN order_item oi ON oi.order_id = cr.order_id");
-    Long remainingCapacity = count("SELECT COALESCE(SUM(remaining), 0) FROM ticket_inventory");
+    Long remainingCapacity = count("SELECT COALESCE(SUM(remaining), 0) FROM daily_ticket_inventory");
     List<Map<String, Object>> trend = jdbcTemplate.queryForList("""
         SELECT DATE(start_time) AS date, COUNT(s.id) AS count
         FROM activity a
@@ -40,31 +45,29 @@ public class AdminMockService {
   }
 
   public PageResult<Map<String, Object>> records(String domain) {
+    return records(domain, Map.of());
+  }
+
+  public PageResult<Map<String, Object>> records(String domain, Map<String, String[]> params) {
     List<Map<String, Object>> records = switch (domain) {
-      case "tickets" -> jdbcTemplate.queryForList("""
-          SELECT tt.id, tt.code, tt.name, tt.price, tt.description, tt.status,
-                 COALESCE(MAX(ti.capacity), 0) AS capacity, COALESCE(SUM(ti.remaining), 0) AS remaining
-          FROM ticket_type tt
-          LEFT JOIN ticket_inventory ti ON ti.ticket_type_id = tt.id
-          GROUP BY tt.id, tt.code, tt.name, tt.price, tt.description, tt.status
-          ORDER BY tt.id
-          """);
-      case "orders" -> jdbcTemplate.queryForList("""
+      case "tickets" -> ticketRecords(params);
+      case "orders" -> normalizeDateTimes(jdbcTemplate.queryForList("""
           SELECT o.id, o.order_no AS orderNo, u.username AS visitor, u.phone, o.visit_date AS visitDate,
                  o.session_code AS session, o.amount, o.order_status AS status, o.payment_status AS paymentStatus,
-                 o.created_at AS createdAt
+                 o.created_at AS createdAt,
+                 (SELECT rr.id FROM refund_record rr WHERE rr.order_id = o.id ORDER BY rr.id DESC LIMIT 1) AS refundId
           FROM reservation_order o
           LEFT JOIN user u ON u.id = o.user_id
           ORDER BY o.created_at DESC
-          """);
-      case "activities" -> jdbcTemplate.queryForList("""
+          """));
+      case "activities" -> normalizeDateTimes(jdbcTemplate.queryForList("""
           SELECT a.id, a.title, a.category, a.start_time AS startTime, a.capacity,
                  COUNT(s.id) AS signed, a.location, a.status
           FROM activity a
           LEFT JOIN activity_signup s ON s.activity_id = a.id
           GROUP BY a.id, a.title, a.category, a.start_time, a.capacity, a.location, a.status
           ORDER BY a.start_time
-          """);
+          """));
       case "animals" -> jdbcTemplate.queryForList("""
           SELECT a.id, a.name, a.species, z.name AS zone, a.media_url AS media,
                  CONCAT('P-', a.id) AS guidePoint, a.status, a.description
@@ -72,7 +75,7 @@ public class AdminMockService {
           LEFT JOIN zone z ON z.id = a.zone_id
           ORDER BY a.id
           """);
-      case "checkins" -> jdbcTemplate.queryForList("""
+      case "checkins" -> normalizeDateTimes(jdbcTemplate.queryForList("""
           SELECT cr.id, o.order_no AS orderNo, au.display_name AS checker,
                  COALESCE((SELECT SUM(quantity) FROM order_item WHERE order_id = o.id), 0) AS people,
                  cr.checked_at AS checkedAt, cr.remark, cr.status
@@ -80,28 +83,28 @@ public class AdminMockService {
           JOIN reservation_order o ON o.id = cr.order_id
           JOIN admin_user au ON au.id = cr.checker_id
           ORDER BY cr.checked_at DESC
-          """);
+          """));
       case "marketing" -> marketingRecords();
-      case "system" -> jdbcTemplate.queryForList("""
+      case "system" -> normalizeDateTimes(jdbcTemplate.queryForList("""
           SELECT au.id, au.username, au.display_name AS displayName, r.name AS role,
                  au.created_at AS lastLogin, r.code AS scope, au.status
           FROM admin_user au
           LEFT JOIN user_role ur ON ur.user_id = au.id AND ur.user_type = 'ADMIN'
           LEFT JOIN role r ON r.id = ur.role_id
           ORDER BY au.id
-          """);
-      case "logs" -> jdbcTemplate.queryForList("""
+          """));
+      case "logs" -> normalizeDateTimes(jdbcTemplate.queryForList("""
           SELECT id, action AS name, resource, detail AS description, created_at AS createdAt, 'ENABLED' AS status
           FROM operation_log
           ORDER BY created_at DESC
-          """);
+          """));
       default -> List.of();
     };
     return PageResult.firstPage(records);
   }
 
   public Map<String, Object> create(String domain, Map<String, Object> payload) {
-    return switch (domain) {
+    Map<String, Object> record = switch (domain) {
       case "tickets" -> createTicket(payload);
       case "activities" -> createActivity(payload);
       case "animals" -> createAnimal(payload);
@@ -109,6 +112,8 @@ public class AdminMockService {
       case "system" -> createAdminUser(payload);
       default -> payload;
     };
+    logOperation("CREATE_" + domain.toUpperCase(), domain, "后台新增记录");
+    return record;
   }
 
   public Map<String, Object> updateInventory(Map<String, Object> payload) {
@@ -116,6 +121,11 @@ public class AdminMockService {
     String session = text(payload, "session", "AM");
     LocalDate visitDate = LocalDate.parse(text(payload, "visitDate", LocalDate.now().toString()));
     Long ticketTypeId = jdbcTemplate.queryForObject("SELECT id FROM ticket_type WHERE code = ?", Long.class, ticketCode);
+    Integer dailyCapacity = integerOrNull(payload, "dailyCapacity");
+    Integer dailyRemaining = integerOrNull(payload, "dailyRemaining");
+    if (dailyCapacity != null || dailyRemaining != null) {
+      upsertDailyInventory(ticketTypeId, visitDate, dailyCapacity, dailyRemaining);
+    }
     int updated = jdbcTemplate.update("""
         UPDATE ticket_inventory
         SET capacity = ?, remaining = ?
@@ -127,6 +137,7 @@ public class AdminMockService {
           VALUES (?, ?, ?, ?, ?)
           """, ticketTypeId, visitDate, session, integer(payload, "capacity", 0), integer(payload, "remaining", 0));
     }
+    logOperation("UPDATE_INVENTORY", ticketCode, visitDate + " " + session);
     return Map.of("updated", true);
   }
 
@@ -134,80 +145,134 @@ public class AdminMockService {
     switch (domain) {
       case "tickets" -> jdbcTemplate.update("UPDATE ticket_type SET name = ?, price = ?, description = ?, status = ? WHERE id = ?",
           text(payload, "name"), decimal(payload, "price"), text(payload, "description"), text(payload, "status", "ENABLED"), id);
-      case "activities" -> jdbcTemplate.update("UPDATE activity SET title = ?, category = ?, capacity = ?, location = ?, status = ? WHERE id = ?",
-          text(payload, "title"), text(payload, "category"), integer(payload, "capacity", 0), text(payload, "location"), text(payload, "status", "PUBLISHED"), id);
-      case "animals" -> jdbcTemplate.update("UPDATE animal SET name = ?, species = ?, description = ?, status = ? WHERE id = ?",
-          text(payload, "name"), text(payload, "species"), text(payload, "description"), text(payload, "status", "VISIBLE"), id);
+      case "activities" -> jdbcTemplate.update("UPDATE activity SET title = ?, category = ?, start_time = ?, capacity = ?, location = ?, status = ? WHERE id = ?",
+          text(payload, "title"), text(payload, "category"), parseDateTime(text(payload, "startTime")), integer(payload, "capacity", 0), text(payload, "location"), text(payload, "status", "PUBLISHED"), id);
+      case "animals" -> {
+        Long zoneId = ensureZone(text(payload, "zone", "未分区"));
+        jdbcTemplate.update("UPDATE animal SET zone_id = ?, name = ?, species = ?, description = ?, media_url = ?, status = ? WHERE id = ?",
+            zoneId, text(payload, "name"), text(payload, "species"), text(payload, "description"), text(payload, "media"), text(payload, "status", "VISIBLE"), id);
+      }
+      case "marketing" -> updateMarketing(id, payload);
       case "system" -> jdbcTemplate.update("UPDATE admin_user SET display_name = ?, status = ? WHERE id = ?",
           text(payload, "displayName"), text(payload, "status", "ENABLED"), id);
       default -> {
       }
     }
-    return byId(domain, id);
+    logOperation("UPDATE_" + domain.toUpperCase(), domain + ":" + id, "后台更新记录");
+    return byId(domain, id, text(payload, "resourceType", null));
   }
 
-  public Map<String, Object> toggleStatus(String domain, Long id, String status) {
+  public Map<String, Object> toggleStatus(String domain, Long id, Map<String, Object> payload) {
+    String status = text(payload, "status", "ENABLED");
     String table = switch (domain) {
       case "tickets" -> "ticket_type";
       case "activities" -> "activity";
       case "animals" -> "animal";
+      case "marketing" -> marketingTable(payload);
       case "system" -> "admin_user";
       default -> "";
     };
     if (!table.isBlank()) {
       jdbcTemplate.update("UPDATE " + table + " SET status = ? WHERE id = ?", status, id);
+      logOperation("STATUS_" + domain.toUpperCase(), domain + ":" + id, status);
     }
-    return byId(domain, id);
+    return byId(domain, id, text(payload, "resourceType", null));
+  }
+
+  public void logOperation(String action, String resource, String detail) {
+    jdbcTemplate.update("INSERT INTO operation_log (operator_id, action, resource, detail, ip) VALUES (1, ?, ?, ?, 'admin')",
+        action, resource, detail);
+  }
+
+  private List<Map<String, Object>> ticketRecords(Map<String, String[]> params) {
+    LocalDate visitDate = LocalDate.parse(param(params, "visitDate", LocalDate.now().toString()));
+    String session = param(params, "session", "AM");
+    return jdbcTemplate.queryForList("""
+        SELECT tt.id, tt.code, tt.name, tt.price, tt.description, tt.status, ? AS visitDate, ? AS session,
+               tt.code AS ticketTypeCode, COALESCE(ti.capacity, 0) AS capacity, COALESCE(ti.remaining, 0) AS remaining,
+               COALESCE(di.capacity, 0) AS dailyCapacity, COALESCE(di.remaining, 0) AS dailyRemaining
+        FROM ticket_type tt
+        LEFT JOIN ticket_inventory ti ON ti.ticket_type_id = tt.id AND ti.visit_date = ? AND ti.session_code = ?
+        LEFT JOIN daily_ticket_inventory di ON di.ticket_type_id = tt.id AND di.visit_date = ?
+        ORDER BY tt.id
+        """, visitDate.toString(), session, visitDate, session, visitDate);
   }
 
   private Map<String, Object> createTicket(Map<String, Object> payload) {
     GeneratedKeyHolder keyHolder = insert("INSERT INTO ticket_type (code, name, price, description, status) VALUES (?, ?, ?, ?, ?)",
         text(payload, "code", text(payload, "name").toUpperCase()), text(payload, "name"), decimal(payload, "price"),
         text(payload, "description"), text(payload, "status", "ENABLED"));
-    return byId("tickets", keyId(keyHolder));
+    return byId("tickets", keyId(keyHolder), null);
   }
 
   private Map<String, Object> createActivity(Map<String, Object> payload) {
-    GeneratedKeyHolder keyHolder = insert("INSERT INTO activity (title, category, start_time, capacity, location, status) VALUES (?, ?, CURRENT_TIMESTAMP, ?, ?, ?)",
-        text(payload, "title"), text(payload, "category"), integer(payload, "capacity", 0), text(payload, "location"), text(payload, "status", "PUBLISHED"));
-    return byId("activities", keyId(keyHolder));
+    GeneratedKeyHolder keyHolder = insert("INSERT INTO activity (title, category, start_time, capacity, location, status) VALUES (?, ?, ?, ?, ?, ?)",
+        text(payload, "title"), text(payload, "category"), parseDateTime(text(payload, "startTime", LocalDateTime.now().format(DATE_TIME))),
+        integer(payload, "capacity", 0), text(payload, "location"), text(payload, "status", "PUBLISHED"));
+    return byId("activities", keyId(keyHolder), null);
   }
 
   private Map<String, Object> createAnimal(Map<String, Object> payload) {
     Long zoneId = ensureZone(text(payload, "zone", "未分区"));
     GeneratedKeyHolder keyHolder = insert("INSERT INTO animal (zone_id, name, species, description, media_url, status) VALUES (?, ?, ?, ?, ?, ?)",
-        zoneId, text(payload, "name"), text(payload, "species"), text(payload, "description"), "", text(payload, "status", "VISIBLE"));
-    return byId("animals", keyId(keyHolder));
+        zoneId, text(payload, "name"), text(payload, "species"), text(payload, "description"), text(payload, "media"), text(payload, "status", "VISIBLE"));
+    return byId("animals", keyId(keyHolder), null);
   }
 
   private Map<String, Object> createMarketing(Map<String, Object> payload) {
-    String type = text(payload, "type", "优惠券");
-    if (type.contains("公告")) {
+    String resourceType = text(payload, "resourceType", text(payload, "type", "COUPON"));
+    if (isNotice(resourceType)) {
       GeneratedKeyHolder keyHolder = insert("INSERT INTO notice (title, content, status, published_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
           text(payload, "name"), text(payload, "description"), text(payload, "status", "PUBLISHED"));
-      return Map.of("id", keyId(keyHolder), "name", text(payload, "name"), "type", "公告", "status", text(payload, "status", "PUBLISHED"));
+      return byId("marketing", keyId(keyHolder), "NOTICE");
     }
-    GeneratedKeyHolder keyHolder = insert("INSERT INTO coupon (name, discount_type, discount_value, status) VALUES (?, 'AMOUNT', ?, ?)",
-        text(payload, "name"), decimal(payload, "discountValue", BigDecimal.ZERO), text(payload, "status", "ENABLED"));
-    return Map.of("id", keyId(keyHolder), "name", text(payload, "name"), "type", "优惠券", "status", text(payload, "status", "ENABLED"));
+    GeneratedKeyHolder keyHolder = insert("""
+        INSERT INTO coupon (name, discount_type, discount_value, threshold_amount, total_quantity, status)
+        VALUES (?, 'AMOUNT', ?, ?, ?, ?)
+        """, text(payload, "name"), decimal(payload, "discountValue", BigDecimal.ZERO),
+        decimal(payload, "thresholdAmount", BigDecimal.ZERO), integer(payload, "totalQuantity", 0), text(payload, "status", "ENABLED"));
+    return byId("marketing", keyId(keyHolder), "COUPON");
   }
 
   private Map<String, Object> createAdminUser(Map<String, Object> payload) {
     GeneratedKeyHolder keyHolder = insert("INSERT INTO admin_user (username, display_name, password_hash, status) VALUES (?, ?, ?, ?)",
         text(payload, "username"), text(payload, "displayName"), passwordEncoder.encode(text(payload, "password", "admin123")), text(payload, "status", "ENABLED"));
-    return byId("system", keyId(keyHolder));
+    return byId("system", keyId(keyHolder), null);
   }
 
   private List<Map<String, Object>> marketingRecords() {
     List<Map<String, Object>> records = new java.util.ArrayList<>();
-    records.addAll(jdbcTemplate.queryForList("SELECT id, name, '优惠券' AS type, discount_value AS budget, status FROM coupon ORDER BY id"));
-    records.addAll(jdbcTemplate.queryForList("SELECT id, title AS name, '公告' AS type, published_at AS period, status FROM notice ORDER BY id"));
+    records.addAll(jdbcTemplate.queryForList("""
+        SELECT id, name, '优惠券' AS type, 'COUPON' AS resourceType, discount_value AS discountValue,
+               threshold_amount AS thresholdAmount, total_quantity AS totalQuantity,
+               claimed_quantity AS claimed, status
+        FROM coupon ORDER BY id
+        """));
+    records.addAll(normalizeDateTimes(jdbcTemplate.queryForList("""
+        SELECT id, title AS name, '公告' AS type, 'NOTICE' AS resourceType, content AS description,
+               published_at AS period, status
+        FROM notice ORDER BY id
+        """)));
     return records;
   }
 
-  private Map<String, Object> byId(String domain, Long id) {
+  private void updateMarketing(Long id, Map<String, Object> payload) {
+    if (isNotice(text(payload, "resourceType", text(payload, "type")))) {
+      jdbcTemplate.update("UPDATE notice SET title = ?, content = ?, status = ? WHERE id = ?",
+          text(payload, "name"), text(payload, "description"), text(payload, "status", "PUBLISHED"), id);
+      return;
+    }
+    jdbcTemplate.update("""
+        UPDATE coupon SET name = ?, discount_value = ?, threshold_amount = ?, total_quantity = ?, status = ?
+        WHERE id = ?
+        """, text(payload, "name"), decimal(payload, "discountValue", BigDecimal.ZERO),
+        decimal(payload, "thresholdAmount", BigDecimal.ZERO), integer(payload, "totalQuantity", 0), text(payload, "status", "ENABLED"), id);
+  }
+
+  private Map<String, Object> byId(String domain, Long id, String resourceType) {
     return records(domain).records().stream()
         .filter(record -> String.valueOf(record.get("id")).equals(String.valueOf(id)))
+        .filter(record -> resourceType == null || resourceType.equals(String.valueOf(record.get("resourceType"))))
         .findFirst()
         .orElseGet(LinkedHashMap::new);
   }
@@ -274,5 +339,76 @@ public class AdminMockService {
   private int integer(Map<String, Object> payload, String key, int fallback) {
     Object value = payload.get(key);
     return value == null || String.valueOf(value).isBlank() ? fallback : Integer.parseInt(String.valueOf(value));
+  }
+
+  private Integer integerOrNull(Map<String, Object> payload, String key) {
+    Object value = payload.get(key);
+    return value == null || String.valueOf(value).isBlank() ? null : Integer.parseInt(String.valueOf(value));
+  }
+
+  private void upsertDailyInventory(Long ticketTypeId, LocalDate visitDate, Integer capacity, Integer remaining) {
+    Integer existingCapacity = jdbcTemplate.query("""
+        SELECT capacity
+        FROM daily_ticket_inventory
+        WHERE ticket_type_id = ? AND visit_date = ?
+        """, rs -> rs.next() ? rs.getInt("capacity") : null, ticketTypeId, visitDate);
+    Integer existingRemaining = jdbcTemplate.query("""
+        SELECT remaining
+        FROM daily_ticket_inventory
+        WHERE ticket_type_id = ? AND visit_date = ?
+        """, rs -> rs.next() ? rs.getInt("remaining") : null, ticketTypeId, visitDate);
+    int nextCapacity = capacity == null ? (existingCapacity == null ? 0 : existingCapacity) : capacity;
+    int nextRemaining = remaining == null ? (existingRemaining == null ? nextCapacity : existingRemaining) : remaining;
+    int updated = jdbcTemplate.update("""
+        UPDATE daily_ticket_inventory
+        SET capacity = ?, remaining = ?
+        WHERE ticket_type_id = ? AND visit_date = ?
+        """, nextCapacity, nextRemaining, ticketTypeId, visitDate);
+    if (updated == 0) {
+      jdbcTemplate.update("""
+          INSERT INTO daily_ticket_inventory (ticket_type_id, visit_date, capacity, remaining)
+          VALUES (?, ?, ?, ?)
+          """, ticketTypeId, visitDate, nextCapacity, nextRemaining);
+    }
+  }
+
+  private String param(Map<String, String[]> params, String key, String fallback) {
+    String[] values = params.get(key);
+    return values == null || values.length == 0 || values[0].isBlank() ? fallback : values[0];
+  }
+
+  private LocalDateTime parseDateTime(String value) {
+    if (value == null || value.isBlank()) {
+      return LocalDateTime.now();
+    }
+    String normalized = value.replace('T', ' ');
+    if (normalized.length() == 16) {
+      normalized += ":00";
+    }
+    return LocalDateTime.parse(normalized, DATE_TIME);
+  }
+
+  private String marketingTable(Map<String, Object> payload) {
+    return isNotice(text(payload, "resourceType", text(payload, "type"))) ? "notice" : "coupon";
+  }
+
+  private boolean isNotice(String type) {
+    return type != null && ("NOTICE".equalsIgnoreCase(type) || type.contains("公告"));
+  }
+
+  private List<Map<String, Object>> normalizeDateTimes(List<Map<String, Object>> records) {
+    return records.stream().map(record -> {
+      Map<String, Object> normalized = new LinkedHashMap<>(record);
+      normalized.replaceAll((key, value) -> {
+        if (value instanceof Timestamp timestamp) {
+          return timestamp.toLocalDateTime().format(DATE_TIME);
+        }
+        if (value instanceof LocalDateTime dateTime) {
+          return dateTime.format(DATE_TIME);
+        }
+        return value;
+      });
+      return normalized;
+    }).toList();
   }
 }

@@ -50,6 +50,14 @@ public class MockOrderService {
     for (var item : items) {
       Map<String, Object> ticket = ticketByCode(item.ticketTypeCode());
       int quantity = Math.max(1, item.quantity());
+      int dailyUpdated = jdbcTemplate.update("""
+          UPDATE daily_ticket_inventory
+          SET remaining = remaining - ?
+          WHERE visit_date = ? AND ticket_type_id = ? AND remaining >= ?
+          """, quantity, Date.valueOf(request.visitDate()), ticket.get("id"), quantity);
+      if (dailyUpdated == 0) {
+        throw new IllegalStateException("搴撳瓨涓嶈冻");
+      }
       int updated = jdbcTemplate.update("""
           UPDATE ticket_inventory
           SET remaining = remaining - ?
@@ -369,6 +377,11 @@ public class MockOrderService {
         WHERE o.id = ?
         """, rs -> {
       while (rs.next()) {
+        jdbcTemplate.update("""
+            UPDATE daily_ticket_inventory
+            SET remaining = LEAST(capacity, remaining + ?)
+            WHERE visit_date = ? AND ticket_type_id = ?
+            """, rs.getInt("quantity"), rs.getDate("visit_date"), rs.getLong("ticket_type_id"));
         jdbcTemplate.update("""
             UPDATE ticket_inventory
             SET remaining = LEAST(capacity, remaining + ?)

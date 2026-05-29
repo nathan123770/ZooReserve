@@ -57,13 +57,17 @@ export const activityApi = {
 
 export const adminApi = {
   dashboard: () => getData<Record<string, unknown>>('/admin/dashboard/summary'),
-  records: (domain: string) => getData<{ records: unknown[] }>(domain === 'orders' ? '/admin/orders' : `/admin/${domain}`),
+  records: (domain: string, params?: Record<string, unknown>) => getData<{ records: unknown[] }>(domain === 'orders' ? '/admin/orders' : `/admin/${domain}`, params),
   create: (domain: string, payload: Record<string, unknown>) => postData<Record<string, unknown>>(`/admin/${domain}`, payload),
   update: (domain: string, id: number, payload: Record<string, unknown>) =>
     putData<Record<string, unknown>>(`/admin/${domain}/${id}`, payload),
   updateInventory: (payload: Record<string, unknown>) => putData<Record<string, unknown>>('/admin/tickets/inventory', payload),
   toggleStatus: (domain: string, id: number, status: string) =>
     putData<Record<string, unknown>>(`/admin/${domain}/${id}/status`, { status }),
+  toggleStatusWithPayload: (domain: string, id: number, payload: Record<string, unknown>) =>
+    putData<Record<string, unknown>>(`/admin/${domain}/${id}/status`, payload),
+  approveRefund: (refundId: number) => postData<Record<string, unknown>>(`/admin/refunds/${refundId}/approve`),
+  manualCheckin: (payload: Record<string, unknown>) => postData<Record<string, unknown>>('/admin/checkins/manual', payload),
 };
 
 export const checkinApi = {

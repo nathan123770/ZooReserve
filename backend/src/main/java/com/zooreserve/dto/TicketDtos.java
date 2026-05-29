@@ -10,6 +10,7 @@ public final class TicketDtos {
   public record TicketTypeResponse(String code, String name, BigDecimal price, String description, boolean annualPass) {
   }
 
-  public record TicketInventoryResponse(LocalDate date, String session, String ticketTypeCode, int capacity, int remaining) {
+  public record TicketInventoryResponse(LocalDate date, String session, String ticketTypeCode, int capacity, int remaining,
+                                        int dailyCapacity, int dailyRemaining) {
   }
 }
