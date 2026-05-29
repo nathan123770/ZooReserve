@@ -52,16 +52,16 @@ public class AdminMockService {
     List<Map<String, Object>> records = switch (domain) {
       case "tickets" -> ticketRecords(params);
       case "orders" -> normalizeDateTimes(jdbcTemplate.queryForList("""
-          SELECT o.id, o.order_no AS orderNo, u.username AS visitor, u.phone, o.visit_date AS visitDate,
-                 o.session_code AS session, o.amount, o.order_status AS status, o.payment_status AS paymentStatus,
-                 o.created_at AS createdAt,
-                 (SELECT rr.id FROM refund_record rr WHERE rr.order_id = o.id ORDER BY rr.id DESC LIMIT 1) AS refundId
+          SELECT o.id, o.order_no AS "orderNo", u.username AS visitor, u.phone, o.visit_date AS "visitDate",
+                 o.session_code AS session, o.amount, o.order_status AS status, o.payment_status AS "paymentStatus",
+                 o.created_at AS "createdAt",
+                 (SELECT rr.id FROM refund_record rr WHERE rr.order_id = o.id ORDER BY rr.id DESC LIMIT 1) AS "refundId"
           FROM reservation_order o
           LEFT JOIN user u ON u.id = o.user_id
           ORDER BY o.created_at DESC
           """));
       case "activities" -> normalizeDateTimes(jdbcTemplate.queryForList("""
-          SELECT a.id, a.title, a.category, a.start_time AS startTime, a.capacity,
+          SELECT a.id, a.title, a.category, a.start_time AS "startTime", a.capacity,
                  COUNT(s.id) AS signed, a.location, a.status
           FROM activity a
           LEFT JOIN activity_signup s ON s.activity_id = a.id
@@ -70,15 +70,15 @@ public class AdminMockService {
           """));
       case "animals" -> jdbcTemplate.queryForList("""
           SELECT a.id, a.name, a.species, z.name AS zone, a.media_url AS media,
-                 CONCAT('P-', a.id) AS guidePoint, a.status, a.description
+                 CONCAT('P-', a.id) AS "guidePoint", a.status, a.description
           FROM animal a
           LEFT JOIN zone z ON z.id = a.zone_id
           ORDER BY a.id
           """);
       case "checkins" -> normalizeDateTimes(jdbcTemplate.queryForList("""
-          SELECT cr.id, o.order_no AS orderNo, au.display_name AS checker,
+          SELECT cr.id, o.order_no AS "orderNo", au.display_name AS checker,
                  COALESCE((SELECT SUM(quantity) FROM order_item WHERE order_id = o.id), 0) AS people,
-                 cr.checked_at AS checkedAt, cr.remark, cr.status
+                 cr.checked_at AS "checkedAt", cr.remark, cr.status
           FROM checkin_record cr
           JOIN reservation_order o ON o.id = cr.order_id
           JOIN admin_user au ON au.id = cr.checker_id
@@ -86,15 +86,15 @@ public class AdminMockService {
           """));
       case "marketing" -> marketingRecords();
       case "system" -> normalizeDateTimes(jdbcTemplate.queryForList("""
-          SELECT au.id, au.username, au.display_name AS displayName, r.name AS role,
-                 au.created_at AS lastLogin, r.code AS scope, au.status
+          SELECT au.id, au.username, au.display_name AS "displayName", r.name AS role,
+                 au.created_at AS "lastLogin", r.code AS scope, au.status
           FROM admin_user au
           LEFT JOIN user_role ur ON ur.user_id = au.id AND ur.user_type = 'ADMIN'
           LEFT JOIN role r ON r.id = ur.role_id
           ORDER BY au.id
           """));
       case "logs" -> normalizeDateTimes(jdbcTemplate.queryForList("""
-          SELECT id, action AS name, resource, detail AS description, created_at AS createdAt, 'ENABLED' AS status
+          SELECT id, action AS name, resource, detail AS description, created_at AS "createdAt", 'ENABLED' AS status
           FROM operation_log
           ORDER BY created_at DESC
           """));
@@ -188,9 +188,9 @@ public class AdminMockService {
     LocalDate visitDate = LocalDate.parse(param(params, "visitDate", LocalDate.now().toString()));
     String session = param(params, "session", "AM");
     return jdbcTemplate.queryForList("""
-        SELECT tt.id, tt.code, tt.name, tt.price, tt.description, tt.status, ? AS visitDate, ? AS session,
-               tt.code AS ticketTypeCode, COALESCE(ti.capacity, 0) AS capacity, COALESCE(ti.remaining, 0) AS remaining,
-               COALESCE(di.capacity, 0) AS dailyCapacity, COALESCE(di.remaining, 0) AS dailyRemaining
+        SELECT tt.id, tt.code, tt.name, tt.price, tt.description, tt.status, ? AS "visitDate", ? AS session,
+               tt.code AS "ticketTypeCode", COALESCE(ti.capacity, 0) AS capacity, COALESCE(ti.remaining, 0) AS remaining,
+               COALESCE(di.capacity, 0) AS "dailyCapacity", COALESCE(di.remaining, 0) AS "dailyRemaining"
         FROM ticket_type tt
         LEFT JOIN ticket_inventory ti ON ti.ticket_type_id = tt.id AND ti.visit_date = ? AND ti.session_code = ?
         LEFT JOIN daily_ticket_inventory di ON di.ticket_type_id = tt.id AND di.visit_date = ?
