@@ -36,13 +36,14 @@ public class SecurityConfig {
                 "/api/auth/register",
                 "/api/tickets/**",
                 "/api/activities/**",
+                "/api/notices",
                 "/swagger-ui.html",
                 "/swagger-ui/**",
                 "/v3/api-docs/**"
             ).permitAll()
             .requestMatchers("/api/admin/**").hasRole("ADMIN")
             .requestMatchers("/api/checkin/**").hasAnyRole("CHECKER", "ADMIN")
-            .requestMatchers("/api/orders/**", "/api/payments/**", "/api/refunds/**", "/api/member/**").hasAnyRole("VISITOR", "ADMIN")
+            .requestMatchers("/api/orders/**", "/api/payments/**", "/api/refunds/**", "/api/member/**", "/api/coupons/**").hasAnyRole("VISITOR", "ADMIN")
             .anyRequest().authenticated())
         .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
         .build();

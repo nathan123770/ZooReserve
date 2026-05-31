@@ -77,5 +77,5 @@ INSERT INTO annual_pass_holder (annual_pass_id, profile_id, status) VALUES
 (1, 1, 'ACTIVE'),
 (1, 2, 'ACTIVE');
 
-INSERT INTO notice (id, title, content, status, published_at) VALUES
-(1, '端午假期预约提醒', '请提前实名预约', 'PUBLISHED', '2026-05-28 08:00:00');
+INSERT INTO notice (id, title, content, display_position, priority, status, published_at) VALUES
+(1, '端午假期预约提醒', '请提前实名预约', 'ALL', 10, 'PUBLISHED', '2026-05-28 08:00:00');

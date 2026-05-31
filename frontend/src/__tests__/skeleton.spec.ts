@@ -17,6 +17,8 @@ vi.mock('../api/modules', async (importOriginal) => {
       ...actual.memberApi,
       profiles: vi.fn(),
       coupons: vi.fn(),
+      availableCoupons: vi.fn(),
+      notices: vi.fn(),
       annualPasses: vi.fn(),
       createProfile: vi.fn(),
     },
@@ -28,6 +30,8 @@ describe('frontend skeleton contract', () => {
     setActivePinia(createPinia());
     vi.mocked(memberApi.profiles).mockReset();
     vi.mocked(memberApi.coupons).mockReset();
+    vi.mocked(memberApi.availableCoupons).mockReset();
+    vi.mocked(memberApi.notices).mockReset();
     vi.mocked(memberApi.annualPasses).mockReset();
     vi.mocked(memberApi.createProfile).mockReset();
   });
@@ -81,6 +85,11 @@ describe('frontend skeleton contract', () => {
   it('supports member profile defaulting and coupon state', async () => {
     vi.mocked(memberApi.profiles).mockResolvedValueOnce([]);
     vi.mocked(memberApi.coupons).mockResolvedValueOnce([{ id: 1, name: '新客券', threshold: '满 200 减 30', status: 'UNUSED' }]);
+    vi.mocked(memberApi.availableCoupons).mockResolvedValueOnce([]);
+    vi.mocked(memberApi.notices).mockResolvedValueOnce([
+      { id: 1, title: '预约提醒', content: '支付成功后可查看二维码。', status: 'PUBLISHED' },
+      { id: 2, title: '会员权益', content: '年卡预约仍会占用库存。', status: 'PUBLISHED' },
+    ]);
     vi.mocked(memberApi.annualPasses).mockResolvedValueOnce([]);
     vi.mocked(memberApi.createProfile).mockResolvedValueOnce({
       id: 99,

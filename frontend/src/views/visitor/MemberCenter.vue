@@ -170,6 +170,13 @@ async function renewAnnualPass() {
             <h3>优惠券</h3>
             <TicketPercent :size="18" />
           </div>
+          <article v-for="coupon in member.availableCoupons" :key="`available-${coupon.id}`" class="coupon-row available">
+            <div>
+              <strong>{{ coupon.name }}</strong>
+              <span>{{ coupon.threshold }} · {{ coupon.expiresAt }} 到期</span>
+            </div>
+            <el-button type="success" plain @click="member.claimCoupon(coupon.id)">领取</el-button>
+          </article>
           <article v-for="coupon in member.coupons" :key="coupon.id" class="coupon-row">
             <div>
               <strong>{{ coupon.name }}</strong>

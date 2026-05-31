@@ -173,7 +173,15 @@ public class AdminMockService {
       default -> "";
     };
     if (!table.isBlank()) {
-      jdbcTemplate.update("UPDATE " + table + " SET status = ? WHERE id = ?", status, id);
+      if ("notice".equals(table) && "PUBLISHED".equals(status)) {
+        jdbcTemplate.update("""
+            UPDATE notice
+            SET status = ?, published_at = CASE WHEN published_at IS NULL THEN CURRENT_TIMESTAMP ELSE published_at END
+            WHERE id = ?
+            """, status, id);
+      } else {
+        jdbcTemplate.update("UPDATE " + table + " SET status = ? WHERE id = ?", status, id);
+      }
       logOperation("STATUS_" + domain.toUpperCase(), domain + ":" + id, status);
     }
     return byId(domain, id, text(payload, "resourceType", null));
@@ -222,15 +230,21 @@ public class AdminMockService {
   private Map<String, Object> createMarketing(Map<String, Object> payload) {
     String resourceType = text(payload, "resourceType", text(payload, "type", "COUPON"));
     if (isNotice(resourceType)) {
-      GeneratedKeyHolder keyHolder = insert("INSERT INTO notice (title, content, status, published_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
-          text(payload, "name"), text(payload, "description"), text(payload, "status", "PUBLISHED"));
+      String status = text(payload, "status", "PUBLISHED");
+      GeneratedKeyHolder keyHolder = insert("""
+          INSERT INTO notice (title, content, display_position, priority, status, published_at)
+          VALUES (?, ?, ?, ?, ?, ?)
+          """, text(payload, "name"), text(payload, "description"), text(payload, "displayPosition", "ALL"),
+          integer(payload, "priority", 0), status, publishedAt(status));
       return byId("marketing", keyId(keyHolder), "NOTICE");
     }
     GeneratedKeyHolder keyHolder = insert("""
-        INSERT INTO coupon (name, discount_type, discount_value, threshold_amount, total_quantity, status)
-        VALUES (?, 'AMOUNT', ?, ?, ?, ?)
-        """, text(payload, "name"), decimal(payload, "discountValue", BigDecimal.ZERO),
-        decimal(payload, "thresholdAmount", BigDecimal.ZERO), integer(payload, "totalQuantity", 0), text(payload, "status", "ENABLED"));
+        INSERT INTO coupon (name, discount_type, discount_value, threshold_amount, total_quantity, valid_from, valid_to, scope, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, text(payload, "name"), text(payload, "discountType", "AMOUNT"),
+        decimal(payload, "discountValue", BigDecimal.ZERO), decimal(payload, "thresholdAmount", BigDecimal.ZERO),
+        integer(payload, "totalQuantity", 0), parseDateOrNull(text(payload, "validFrom", "")),
+        parseDateOrNull(text(payload, "validTo", "")), text(payload, "scope", "TICKET"), text(payload, "status", "ENABLED"));
     return byId("marketing", keyId(keyHolder), "COUPON");
   }
 
@@ -243,14 +257,15 @@ public class AdminMockService {
   private List<Map<String, Object>> marketingRecords() {
     List<Map<String, Object>> records = new java.util.ArrayList<>();
     records.addAll(jdbcTemplate.queryForList("""
-        SELECT id, name, '优惠券' AS type, 'COUPON' AS resourceType, discount_value AS discountValue,
-               threshold_amount AS thresholdAmount, total_quantity AS totalQuantity,
-               claimed_quantity AS claimed, status
+        SELECT id, name, '优惠券' AS type, 'COUPON' AS "resourceType", discount_value AS "discountValue",
+               threshold_amount AS "thresholdAmount", total_quantity AS "totalQuantity",
+               claimed_quantity AS claimed, discount_type AS "discountType", valid_from AS "validFrom",
+               valid_to AS "validTo", scope, status
         FROM coupon ORDER BY id
         """));
     records.addAll(normalizeDateTimes(jdbcTemplate.queryForList("""
-        SELECT id, title AS name, '公告' AS type, 'NOTICE' AS resourceType, content AS description,
-               published_at AS period, status
+        SELECT id, title AS name, '公告' AS type, 'NOTICE' AS "resourceType", content AS description,
+               display_position AS "displayPosition", priority, published_at AS period, status
         FROM notice ORDER BY id
         """)));
     return records;
@@ -258,15 +273,25 @@ public class AdminMockService {
 
   private void updateMarketing(Long id, Map<String, Object> payload) {
     if (isNotice(text(payload, "resourceType", text(payload, "type")))) {
-      jdbcTemplate.update("UPDATE notice SET title = ?, content = ?, status = ? WHERE id = ?",
-          text(payload, "name"), text(payload, "description"), text(payload, "status", "PUBLISHED"), id);
+      String status = text(payload, "status", "PUBLISHED");
+      jdbcTemplate.update("""
+          UPDATE notice
+          SET title = ?, content = ?, display_position = ?, priority = ?, status = ?,
+              published_at = CASE WHEN ? = 'PUBLISHED' AND published_at IS NULL THEN CURRENT_TIMESTAMP ELSE published_at END
+          WHERE id = ?
+          """, text(payload, "name"), text(payload, "description"), text(payload, "displayPosition", "ALL"),
+          integer(payload, "priority", 0), status, status, id);
       return;
     }
     jdbcTemplate.update("""
-        UPDATE coupon SET name = ?, discount_value = ?, threshold_amount = ?, total_quantity = ?, status = ?
+        UPDATE coupon
+        SET name = ?, discount_type = ?, discount_value = ?, threshold_amount = ?, total_quantity = ?,
+            valid_from = ?, valid_to = ?, scope = ?, status = ?
         WHERE id = ?
-        """, text(payload, "name"), decimal(payload, "discountValue", BigDecimal.ZERO),
-        decimal(payload, "thresholdAmount", BigDecimal.ZERO), integer(payload, "totalQuantity", 0), text(payload, "status", "ENABLED"), id);
+        """, text(payload, "name"), text(payload, "discountType", "AMOUNT"),
+        decimal(payload, "discountValue", BigDecimal.ZERO), decimal(payload, "thresholdAmount", BigDecimal.ZERO),
+        integer(payload, "totalQuantity", 0), parseDateOrNull(text(payload, "validFrom", "")),
+        parseDateOrNull(text(payload, "validTo", "")), text(payload, "scope", "TICKET"), text(payload, "status", "ENABLED"), id);
   }
 
   private Map<String, Object> byId(String domain, Long id, String resourceType) {
@@ -386,6 +411,14 @@ public class AdminMockService {
       normalized += ":00";
     }
     return LocalDateTime.parse(normalized, DATE_TIME);
+  }
+
+  private LocalDate parseDateOrNull(String value) {
+    return value == null || value.isBlank() ? null : LocalDate.parse(value);
+  }
+
+  private LocalDateTime publishedAt(String status) {
+    return "PUBLISHED".equals(status) ? LocalDateTime.now() : null;
   }
 
   private String marketingTable(Map<String, Object> payload) {

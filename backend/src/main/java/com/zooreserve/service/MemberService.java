@@ -76,8 +76,9 @@ public class MemberService {
 
   public List<Map<String, Object>> coupons() {
     return jdbcTemplate.queryForList("""
-        SELECT uc.id, c.name, c.discount_type AS discountType, c.discount_value AS discountValue,
-               c.threshold_amount AS thresholdAmount, c.valid_to AS expiresAt, uc.status
+        SELECT uc.id, c.name, c.discount_type AS "discountType", c.discount_value AS "discountValue",
+               c.threshold_amount AS "thresholdAmount", c.valid_from AS "validFrom", c.valid_to AS "expiresAt",
+               c.scope, uc.status
         FROM user_coupon uc
         JOIN coupon c ON c.id = uc.coupon_id
         WHERE uc.user_id = ?
@@ -90,6 +91,37 @@ public class MemberService {
         """, currentVisitorId());
   }
 
+  public List<Map<String, Object>> availableCoupons() {
+    Long userId = currentVisitorId();
+    return jdbcTemplate.queryForList("""
+        SELECT c.id, c.name, c.discount_type AS "discountType", c.discount_value AS "discountValue",
+               c.threshold_amount AS "thresholdAmount", c.valid_from AS "validFrom", c.valid_to AS "expiresAt",
+               c.scope, c.total_quantity AS "totalQuantity", c.claimed_quantity AS "claimedQuantity", c.status
+        FROM coupon c
+        WHERE c.status = 'ENABLED'
+          AND (c.valid_from IS NULL OR c.valid_from <= CURRENT_DATE)
+          AND (c.valid_to IS NULL OR c.valid_to >= CURRENT_DATE)
+          AND (c.total_quantity IS NULL OR c.claimed_quantity < c.total_quantity)
+          AND NOT EXISTS (
+            SELECT 1 FROM user_coupon uc WHERE uc.user_id = ? AND uc.coupon_id = c.id
+          )
+        ORDER BY c.valid_to, c.id
+        """, userId);
+  }
+
+  public List<Map<String, Object>> notices(String position) {
+    String normalizedPosition = position == null || position.isBlank() ? "ALL" : position.toUpperCase();
+    return jdbcTemplate.queryForList("""
+        SELECT id, title, content, display_position AS "displayPosition", priority, status, published_at AS "publishedAt"
+        FROM notice
+        WHERE status = 'PUBLISHED'
+          AND published_at IS NOT NULL
+          AND published_at <= CURRENT_TIMESTAMP
+          AND (display_position = 'ALL' OR display_position = ?)
+        ORDER BY priority DESC, published_at DESC, id DESC
+        """, normalizedPosition);
+  }
+
   @Transactional
   public Map<String, Object> claimCoupon(Long couponId) {
     Long userId = currentVisitorId();
@@ -97,6 +129,26 @@ public class MemberService {
         "SELECT COUNT(*) FROM user_coupon WHERE user_id = ? AND coupon_id = ?", Integer.class, userId, couponId);
     if (exists != null && exists > 0) {
       throw new IllegalStateException("优惠券已领取");
+    }
+    Map<String, Object> coupon = jdbcTemplate.queryForMap("""
+        SELECT status, total_quantity, claimed_quantity, valid_from, valid_to
+        FROM coupon
+        WHERE id = ?
+        """, couponId);
+    if (!"ENABLED".equals(coupon.get("status"))) {
+      throw new IllegalStateException("优惠券未启用");
+    }
+    Number totalQuantity = (Number) coupon.get("total_quantity");
+    Number claimedQuantity = (Number) coupon.get("claimed_quantity");
+    if (totalQuantity != null && claimedQuantity != null && claimedQuantity.intValue() >= totalQuantity.intValue()) {
+      throw new IllegalStateException("优惠券已领完");
+    }
+    java.sql.Date validFrom = (java.sql.Date) coupon.get("valid_from");
+    java.sql.Date validTo = (java.sql.Date) coupon.get("valid_to");
+    LocalDate today = LocalDate.now();
+    if ((validFrom != null && today.isBefore(validFrom.toLocalDate()))
+        || (validTo != null && today.isAfter(validTo.toLocalDate()))) {
+      throw new IllegalStateException("优惠券不在领取期内");
     }
     jdbcTemplate.update("INSERT INTO user_coupon (user_id, coupon_id, status) VALUES (?, ?, 'UNUSED')", userId, couponId);
     jdbcTemplate.update("UPDATE coupon SET claimed_quantity = claimed_quantity + 1 WHERE id = ?", couponId);

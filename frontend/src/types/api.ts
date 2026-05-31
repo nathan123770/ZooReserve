@@ -87,8 +87,22 @@ export interface MemberCouponRecord {
   thresholdAmount?: number;
   discountValue?: number;
   discountType?: string;
+  validFrom?: string;
+  scope?: string;
+  totalQuantity?: number;
+  claimedQuantity?: number;
   status: string;
   expiresAt?: string;
+}
+
+export interface NoticeRecord {
+  id: number;
+  title: string;
+  content: string;
+  displayPosition?: string;
+  priority?: number;
+  status: string;
+  publishedAt?: string;
 }
 
 export interface AnnualPassRecord {

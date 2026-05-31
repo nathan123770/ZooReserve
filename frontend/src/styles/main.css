@@ -233,9 +233,47 @@ select {
   box-shadow: 0 18px 40px rgba(20, 83, 45, 0.18);
 }
 
+.home-notice-band {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+  padding: 18px 20px;
+  border: 1px solid rgba(14, 165, 233, 0.22);
+  border-radius: 8px;
+  background: #f0f9ff;
+}
+
+.home-notice-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  color: #0369a1;
+}
+
+.home-notice-list {
+  display: grid;
+  gap: 10px;
+}
+
+.home-notice-list article {
+  display: grid;
+  gap: 4px;
+}
+
+.home-notice-list strong {
+  color: #14532d;
+}
+
+.home-notice-list span {
+  color: #4b6353;
+  line-height: 1.6;
+}
+
 .visitor-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 16px;
   padding: 24px 0 44px;
 }
@@ -567,6 +605,15 @@ select {
   border: 1px solid #dcfce7;
   border-radius: 8px;
   background: #f8fffa;
+}
+
+.coupon-row.available {
+  border-color: #fed7aa;
+  background: #fff7ed;
+}
+
+.marketing-tabs {
+  margin-bottom: 12px;
 }
 
 .profile-card {
@@ -904,6 +951,10 @@ select {
   .admin-stat-grid,
   .member-overview,
   .member-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .home-notice-band {
     grid-template-columns: 1fr;
   }
 

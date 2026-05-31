@@ -1,7 +1,7 @@
 import { computed, reactive, ref } from 'vue';
 import { defineStore } from 'pinia';
 import { memberApi } from '@/api/modules';
-import type { AnnualPassRecord, MemberCouponRecord, MemberProfileRecord } from '@/types/api';
+import type { AnnualPassRecord, MemberCouponRecord, MemberProfileRecord, NoticeRecord } from '@/types/api';
 
 export interface MemberProfile {
   id: number;
@@ -18,6 +18,20 @@ export interface MemberCoupon {
   threshold: string;
   status: '可用' | '已使用' | '已过期' | '锁定中';
   expiresAt: string;
+  thresholdAmount: number;
+  discountValue: number;
+  discountType: string;
+  scope: string;
+  totalQuantity?: number;
+  claimedQuantity?: number;
+}
+
+export interface MemberNotice {
+  id: number;
+  title: string;
+  content: string;
+  status: string;
+  publishedAt?: string;
 }
 
 export interface AnnualPassView {
@@ -65,6 +79,22 @@ function normalizeCoupon(coupon: MemberCouponRecord): MemberCoupon {
     threshold,
     status: statusMap[coupon.status] ?? '可用',
     expiresAt: coupon.expiresAt ?? '-',
+    thresholdAmount: Number(coupon.thresholdAmount ?? 0),
+    discountValue: Number(coupon.discountValue ?? 0),
+    discountType: coupon.discountType ?? 'AMOUNT',
+    scope: coupon.scope ?? 'TICKET',
+    totalQuantity: coupon.totalQuantity,
+    claimedQuantity: coupon.claimedQuantity,
+  };
+}
+
+function normalizeNotice(notice: NoticeRecord): MemberNotice {
+  return {
+    id: notice.id,
+    title: notice.title,
+    content: notice.content,
+    status: notice.status,
+    publishedAt: notice.publishedAt,
   };
 }
 
@@ -91,25 +121,27 @@ function normalizeAnnualPass(pass?: AnnualPassRecord): AnnualPassView {
 export const useMemberStore = defineStore('member', () => {
   const profiles = ref<MemberProfile[]>([]);
   const coupons = ref<MemberCoupon[]>([]);
+  const availableCoupons = ref<MemberCoupon[]>([]);
   const annualPasses = ref<AnnualPassView[]>([]);
   const loading = ref(false);
-  const notifications = ref([
-    { id: 1, title: '预约提醒', content: '支付成功后可在入园凭证页查看二维码。', status: '未读' },
-    { id: 2, title: '会员权益', content: '年卡预约仍会占用对应场次库存，请按预约日期入园。', status: '已读' },
-  ]);
+  const notifications = ref<MemberNotice[]>([]);
   const annualPass = reactive<AnnualPassView>(normalizeAnnualPass());
   const defaultProfile = computed(() => profiles.value.find((profile) => profile.isDefault));
 
   async function loadAll() {
     loading.value = true;
     try {
-      const [profileRows, couponRows, passRows] = await Promise.all([
+      const [profileRows, couponRows, availableCouponRows, noticeRows, passRows] = await Promise.all([
         memberApi.profiles(),
         memberApi.coupons(),
+        memberApi.availableCoupons(),
+        memberApi.notices('MEMBER'),
         memberApi.annualPasses(),
       ]);
       profiles.value = profileRows.map(normalizeProfile);
       coupons.value = couponRows.map(normalizeCoupon);
+      availableCoupons.value = availableCouponRows.map(normalizeCoupon);
+      notifications.value = noticeRows.map(normalizeNotice);
       annualPasses.value = passRows.map(normalizeAnnualPass);
       Object.assign(annualPass, annualPasses.value[0] ?? normalizeAnnualPass());
     } finally {
@@ -148,9 +180,15 @@ export const useMemberStore = defineStore('member', () => {
     await loadAll();
   }
 
+  async function claimCoupon(couponId: number) {
+    await memberApi.claimCoupon(couponId);
+    await loadAll();
+  }
+
   return {
     profiles,
     coupons,
+    availableCoupons,
     notifications,
     annualPass,
     annualPasses,
@@ -161,5 +199,6 @@ export const useMemberStore = defineStore('member', () => {
     deleteProfile,
     setDefault,
     renewAnnualPass,
+    claimCoupon,
   };
 });

@@ -309,7 +309,28 @@ class DatabaseBackedApiTest {
     mockMvc.perform(get("/api/member/coupons")
             .header("Authorization", "Bearer " + visitorToken))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.data[0].status").isString());
+        .andExpect(jsonPath("$.data[0].status").isString())
+        .andExpect(jsonPath("$.data[0].scope").value("TICKET"));
+
+    mockMvc.perform(get("/api/notices?position=HOME"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data[*].title", hasItem("端午假期预约提醒")));
+
+    jdbcTemplate.update("""
+        INSERT INTO coupon (name, discount_type, discount_value, threshold_amount, total_quantity, valid_from, valid_to, scope, status)
+        VALUES ('可领取满减券', 'AMOUNT', 10.00, 100.00, 20, DATE '2026-01-01', DATE '2026-12-31', 'TICKET', 'ENABLED')
+        """);
+    Long claimableCouponId = jdbcTemplate.queryForObject("SELECT id FROM coupon WHERE name = '可领取满减券'", Long.class);
+    mockMvc.perform(get("/api/coupons/available")
+            .header("Authorization", "Bearer " + visitorToken))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data[*].name", hasItem("可领取满减券")));
+    mockMvc.perform(post("/api/member/coupons/" + claimableCouponId + "/claim")
+            .header("Authorization", "Bearer " + visitorToken))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.claimed").value(true));
+    assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM user_coupon WHERE user_id = 1 AND coupon_id = ?", Integer.class, claimableCouponId))
+        .isEqualTo(1);
 
     mockMvc.perform(get("/api/member/annual-passes")
             .header("Authorization", "Bearer " + visitorToken))
@@ -395,6 +416,17 @@ class DatabaseBackedApiTest {
             .content("{\"status\":\"DISABLED\",\"type\":\"COUPON\"}"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.status").value("DISABLED"));
+
+    mockMvc.perform(post("/api/admin/marketing")
+            .header("Authorization", "Bearer " + adminToken)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"resourceType\":\"NOTICE\",\"name\":\"闭环公告\",\"description\":\"前台可见\",\"displayPosition\":\"HOME\",\"priority\":99,\"status\":\"PUBLISHED\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.resourceType").value("NOTICE"))
+        .andExpect(jsonPath("$.data.displayPosition").value("HOME"));
+    mockMvc.perform(get("/api/notices?position=HOME"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data[*].title", hasItem("闭环公告")));
 
     String orderJson = mockMvc.perform(post("/api/orders")
             .header("Authorization", "Bearer " + visitorToken)

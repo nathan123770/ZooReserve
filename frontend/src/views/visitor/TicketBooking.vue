@@ -37,17 +37,40 @@ const orderSummary = computed(() =>
 
 const selectedCoupon = computed(() => member.coupons.find((coupon) => coupon.id === couponId.value));
 const selectedAnnualPass = computed(() => member.annualPasses.find((pass) => pass.id === annualPassId.value));
-const payableAmount = computed(() => (useAnnualPass.value ? 0 : booking.totalAmount));
+const usableCoupons = computed(() => member.coupons.filter((coupon) => {
+  if (coupon.status !== '可用') return false;
+  if (coupon.scope !== 'TICKET') return false;
+  if (booking.totalAmount < coupon.thresholdAmount) return false;
+  return coupon.expiresAt === '-' || booking.visitDate <= coupon.expiresAt;
+}));
+const estimatedDiscount = computed(() => {
+  const coupon = selectedCoupon.value;
+  if (!coupon || !usableCoupons.value.some((item) => item.id === coupon.id)) return 0;
+  if (coupon.discountType === 'PERCENT') {
+    return Math.max(0, booking.totalAmount - booking.totalAmount * coupon.discountValue);
+  }
+  return Math.min(booking.totalAmount, coupon.discountValue);
+});
+const payableAmount = computed(() => (useAnnualPass.value ? 0 : Math.max(0, booking.totalAmount - estimatedDiscount.value)));
 
 onMounted(async () => {
   await Promise.all([member.loadAll(), booking.loadInventory()]);
   annualPassId.value = member.annualPasses[0]?.id;
 });
 
+function ensureCouponUsable() {
+  if (couponId.value && !usableCoupons.value.some((coupon) => coupon.id === couponId.value)) {
+    couponId.value = undefined;
+  }
+}
+
 watch(() => booking.visitDate, async () => {
   await booking.loadInventory();
+  ensureCouponUsable();
   active.value = 0;
 });
+
+watch(() => booking.totalAmount, ensureCouponUsable);
 
 function changeQuantity(ticketCode: string, delta: number) {
   booking.setQuantity(ticketCode, (booking.selectedTickets[ticketCode] ?? 0) + delta);
@@ -168,7 +191,7 @@ async function buyAnnualPass(code: string) {
         <el-form-item v-if="!useAnnualPass" label="优惠券">
           <el-select v-model="couponId" clearable placeholder="不使用优惠券" style="width: 220px">
             <el-option
-              v-for="coupon in member.coupons.filter((item) => item.status === '可用')"
+              v-for="coupon in usableCoupons"
               :key="coupon.id"
               :label="`${coupon.name} · ${coupon.threshold}`"
               :value="coupon.id"
@@ -222,6 +245,7 @@ async function buyAnnualPass(code: string) {
           <span v-if="!orderSummary.length">请选择需要预约的票种</span>
           <span v-else>{{ orderSummary.map((item) => `${item.name} x${item.quantity}`).join('，') }}</span>
           <span v-if="selectedCoupon">已选 {{ selectedCoupon.name }}</span>
+          <span v-if="estimatedDiscount">预计优惠 ￥{{ estimatedDiscount }}</span>
           <span v-if="useAnnualPass">使用 {{ selectedAnnualPass?.name ?? '年卡' }} 权益预约，本单免支付</span>
         </div>
         <div class="order-total">

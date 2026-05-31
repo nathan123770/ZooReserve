@@ -30,7 +30,7 @@ import { Download, Filter, Plus, RefreshCw, Search } from 'lucide-vue-next';
 import { adminApi } from '@/api/modules';
 import { toast } from '@/utils/message';
 import { getAdminModule } from './adminModules';
-import type { AdminFormField, AdminRowAction } from './adminModules';
+import type { AdminColumn, AdminFormField, AdminRowAction } from './adminModules';
 
 const route = useRoute();
 const loading = ref(false);
@@ -49,6 +49,83 @@ const moduleConfig = computed(() => getAdminModule(domain.value));
 const records = ref<Record<string, unknown>[]>([]);
 const allRecords = ref<Record<string, unknown>[]>([]);
 const selectedRows = ref<Record<string, unknown>[]>([]);
+const activeMarketingType = ref<'COUPON' | 'NOTICE'>('COUPON');
+
+const couponColumns: AdminColumn[] = [
+  { prop: 'name', label: '优惠券名称', minWidth: 170 },
+  { prop: 'discountType', label: '优惠类型', width: 110 },
+  { prop: 'discountValue', label: '优惠值', width: 100 },
+  { prop: 'thresholdAmount', label: '门槛', width: 100 },
+  { prop: 'totalQuantity', label: '总库存', width: 100 },
+  { prop: 'claimed', label: '已领取', width: 100 },
+  { prop: 'validTo', label: '有效期至', width: 120 },
+  { prop: 'scope', label: '适用范围', width: 110 },
+  { prop: 'status', label: '状态', width: 110, status: true },
+];
+
+const noticeColumns: AdminColumn[] = [
+  { prop: 'name', label: '公告标题', minWidth: 170 },
+  { prop: 'description', label: '公告内容', minWidth: 220 },
+  { prop: 'displayPosition', label: '展示位置', width: 120 },
+  { prop: 'priority', label: '优先级', width: 90 },
+  { prop: 'period', label: '发布时间', width: 170 },
+  { prop: 'status', label: '状态', width: 110, status: true },
+];
+
+const couponFormFields: AdminFormField[] = [
+  { key: 'resourceType', label: '类型', type: 'select', options: ['COUPON'] },
+  { key: 'name', label: '优惠券名称', type: 'text' },
+  { key: 'discountType', label: '优惠类型', type: 'select', options: ['AMOUNT', 'PERCENT'] },
+  { key: 'discountValue', label: '优惠值', type: 'number' },
+  { key: 'thresholdAmount', label: '使用门槛', type: 'number' },
+  { key: 'totalQuantity', label: '发放库存', type: 'number' },
+  { key: 'validFrom', label: '有效期开始', type: 'date' },
+  { key: 'validTo', label: '有效期结束', type: 'date' },
+  { key: 'scope', label: '适用范围', type: 'select', options: ['TICKET'] },
+  { key: 'status', label: '状态', type: 'select', options: ['ENABLED', 'DISABLED'] },
+  { key: 'description', label: '规则说明', type: 'textarea' },
+];
+
+const noticeFormFields: AdminFormField[] = [
+  { key: 'resourceType', label: '类型', type: 'select', options: ['NOTICE'] },
+  { key: 'name', label: '公告标题', type: 'text' },
+  { key: 'displayPosition', label: '展示位置', type: 'select', options: ['ALL', 'HOME', 'MEMBER'] },
+  { key: 'priority', label: '优先级', type: 'number' },
+  { key: 'status', label: '状态', type: 'select', options: ['PUBLISHED', 'DRAFT', 'DISABLED'] },
+  { key: 'description', label: '公告内容', type: 'textarea' },
+];
+
+const activeColumns = computed(() => {
+  if (domain.value !== 'marketing') return moduleConfig.value.columns;
+  return activeMarketingType.value === 'COUPON' ? couponColumns : noticeColumns;
+});
+const activeFormFields = computed(() => {
+  if (domain.value !== 'marketing') return moduleConfig.value.formFields;
+  return activeMarketingType.value === 'COUPON' ? couponFormFields : noticeFormFields;
+});
+const visibleRecords = computed(() => {
+  if (domain.value !== 'marketing') return records.value;
+  return records.value.filter((record) => record.resourceType === activeMarketingType.value);
+});
+
+const optionLabels: Record<string, string> = {
+  ALL: '全站',
+  HOME: '首页公告',
+  MEMBER: '会员消息',
+  COUPON: '优惠券',
+  NOTICE: '公告',
+  AMOUNT: '满减',
+  PERCENT: '折扣',
+  TICKET: '门票预约',
+  ENABLED: '启用',
+  DISABLED: '停用',
+  PUBLISHED: '已发布',
+  DRAFT: '草稿',
+};
+
+function displayText(value: unknown) {
+  return optionLabels[String(value)] ?? String(value ?? '');
+}
 
 function resetData() {
   records.value = [];
@@ -105,16 +182,17 @@ function resetFilters() {
 function openCreate() {
   if (!moduleConfig.value.canCreate) return;
   editingRecord.value = null;
-  for (const field of moduleConfig.value.formFields) {
+  for (const field of activeFormFields.value) {
     formModel[field.key] = defaultValueFor(field);
   }
+  if (domain.value === 'marketing') formModel.resourceType = activeMarketingType.value;
   drawerVisible.value = true;
 }
 
 function openEdit(row: Record<string, unknown>) {
   if (!moduleConfig.value.canEdit && domain.value !== 'orders' && domain.value !== 'checkins') return;
   editingRecord.value = row;
-  for (const field of moduleConfig.value.formFields) {
+  for (const field of activeFormFields.value) {
     formModel[field.key] = row[field.key] ?? defaultValueFor(field);
   }
   drawerVisible.value = true;
@@ -123,15 +201,19 @@ function openEdit(row: Record<string, unknown>) {
 function defaultValueFor(field: AdminFormField) {
   if (field.type === 'number') return 0;
   if (field.type === 'datetime') return new Date().toISOString().slice(0, 16).replace('T', ' ');
-  if (field.key === 'resourceType') return 'COUPON';
+  if (field.key === 'resourceType') return activeMarketingType.value;
+  if (field.key === 'discountType') return 'AMOUNT';
+  if (field.key === 'scope') return 'TICKET';
+  if (field.key === 'displayPosition') return 'HOME';
   return '';
 }
 
 async function submitForm() {
   const payload: Record<string, unknown> = {};
-  for (const field of moduleConfig.value.formFields) {
+  for (const field of activeFormFields.value) {
     payload[field.key] = formModel[field.key];
   }
+  if (domain.value === 'marketing') payload.resourceType = activeMarketingType.value;
   if (editingRecord.value && moduleConfig.value.canEdit) {
     await adminApi.update(domain.value, Number(editingRecord.value.id), payload);
   } else if (moduleConfig.value.canCreate) {
@@ -234,6 +316,7 @@ function exportRecords() {
 }
 
 watch(domain, () => {
+  activeMarketingType.value = 'COUPON';
   resetData();
   void loadRecords();
 }, { immediate: true });
@@ -272,6 +355,11 @@ watch(domain, () => {
       </article>
     </div>
 
+    <el-tabs v-if="domain === 'marketing'" v-model="activeMarketingType" class="marketing-tabs">
+      <el-tab-pane label="优惠券活动" name="COUPON" />
+      <el-tab-pane label="公告发布" name="NOTICE" />
+    </el-tabs>
+
     <section class="admin-filter-panel">
       <div class="panel-label">
         <Filter :size="16" />
@@ -281,7 +369,7 @@ watch(domain, () => {
         <el-form-item v-for="filter in moduleConfig.filters" :key="filter.key" :label="filter.label">
           <el-input v-if="filter.type === 'text'" v-model="filters[filter.key]" :placeholder="filter.placeholder" clearable />
           <el-select v-else-if="filter.type === 'select'" v-model="filters[filter.key]" :placeholder="filter.placeholder ?? '请选择'" clearable style="width: 150px">
-            <el-option v-for="option in filter.options" :key="option" :label="option" :value="option" />
+            <el-option v-for="option in filter.options" :key="option" :label="displayText(option)" :value="option" />
           </el-select>
           <el-date-picker v-else v-model="filters[filter.key]" value-format="YYYY-MM-DD" type="date" />
         </el-form-item>
@@ -300,16 +388,16 @@ watch(domain, () => {
 
     <section class="admin-data-panel">
       <div class="table-toolbar">
-        <span>共 {{ records.length }} 条记录</span>
+        <span>共 {{ visibleRecords.length }} 条记录</span>
         <span v-if="selectedRows.length">已选择 {{ selectedRows.length }} 条</span>
       </div>
-      <el-table v-loading="loading" :data="records" stripe border @selection-change="(rows: Record<string, unknown>[]) => (selectedRows = rows)">
+      <el-table v-loading="loading" :data="visibleRecords" stripe border @selection-change="(rows: Record<string, unknown>[]) => (selectedRows = rows)">
         <el-table-column type="selection" width="44" />
         <el-table-column prop="id" label="ID" width="72" />
-        <el-table-column v-for="column in moduleConfig.columns" :key="column.prop" :prop="column.prop" :label="column.label" :width="column.width" :min-width="column.minWidth">
+        <el-table-column v-for="column in activeColumns" :key="column.prop" :prop="column.prop" :label="column.label" :width="column.width" :min-width="column.minWidth">
           <template #default="{ row }">
-            <el-tag v-if="column.status" :type="statusType(row[column.prop])">{{ row[column.prop] }}</el-tag>
-            <span v-else>{{ row[column.prop] }}</span>
+            <el-tag v-if="column.status" :type="statusType(row[column.prop])">{{ displayText(row[column.prop]) }}</el-tag>
+            <span v-else>{{ displayText(row[column.prop]) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="操作" fixed="right" width="220">
@@ -322,17 +410,17 @@ watch(domain, () => {
       </el-table>
       <div class="admin-pagination">
         <span>第 1 页 / 每页 10 条</span>
-        <el-pagination layout="prev, pager, next" :total="records.length" />
+        <el-pagination layout="prev, pager, next" :total="visibleRecords.length" />
       </div>
     </section>
 
     <el-drawer v-model="drawerVisible" :title="editingRecord ? '记录详情/编辑' : moduleConfig.primaryAction" size="420px">
       <el-form label-position="top">
-        <el-form-item v-for="field in moduleConfig.formFields" :key="field.key" :label="field.label">
+        <el-form-item v-for="field in activeFormFields" :key="field.key" :label="field.label">
           <el-input v-if="field.type === 'text'" v-model="formModel[field.key]" :disabled="editingRecord && !moduleConfig.canEdit" :placeholder="placeholderFor(field)" />
           <el-input-number v-else-if="field.type === 'number'" v-model="formModel[field.key] as number" :disabled="editingRecord && !moduleConfig.canEdit" :min="0" />
           <el-select v-else-if="field.type === 'select'" v-model="formModel[field.key]" :disabled="editingRecord && !moduleConfig.canEdit" placeholder="请选择">
-            <el-option v-for="option in field.options" :key="option" :label="option" :value="option" />
+            <el-option v-for="option in field.options" :key="option" :label="displayText(option)" :value="option" />
           </el-select>
           <el-date-picker v-else-if="field.type === 'date'" v-model="formModel[field.key]" :disabled="editingRecord && !moduleConfig.canEdit" value-format="YYYY-MM-DD" type="date" />
           <el-date-picker v-else-if="field.type === 'datetime'" v-model="formModel[field.key]" :disabled="editingRecord && !moduleConfig.canEdit" value-format="YYYY-MM-DD HH:mm:ss" type="datetime" />

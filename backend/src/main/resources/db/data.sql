@@ -290,16 +290,16 @@ JOIN admin_user au ON au.username = 'checker'
 WHERE o.order_no = 'ZR202606020001'
   AND NOT EXISTS (SELECT 1 FROM checkin_record cr WHERE cr.order_id = o.id);
 
-INSERT INTO notice (title, content, status, published_at)
-SELECT '端午假期预约提醒', '端午假期客流较大，请提前完成实名预约并按预约场次入园。', 'PUBLISHED', '2026-05-28 08:00:00'
+INSERT INTO notice (title, content, display_position, priority, status, published_at)
+SELECT '端午假期预约提醒', '端午假期客流较大，请提前完成实名预约并按预约场次入园。', 'ALL', 30, 'PUBLISHED', '2026-05-28 08:00:00'
 WHERE NOT EXISTS (SELECT 1 FROM notice WHERE title = '端午假期预约提醒');
 
-INSERT INTO notice (title, content, status, published_at)
-SELECT '夏夜动物园开放公告', '6月2日起每周五、周六开放夜游场次，部分展馆开放时间延长至21:00。', 'PUBLISHED', '2026-05-28 08:30:00'
+INSERT INTO notice (title, content, display_position, priority, status, published_at)
+SELECT '夏夜动物园开放公告', '6月2日起每周五、周六开放夜游场次，部分展馆开放时间延长至21:00。', 'HOME', 20, 'PUBLISHED', '2026-05-28 08:30:00'
 WHERE NOT EXISTS (SELECT 1 FROM notice WHERE title = '夏夜动物园开放公告');
 
-INSERT INTO notice (title, content, status, published_at)
-SELECT '雨林馆维护提示', '热带雨林馆每日12:30至13:00进行环境维护，期间暂停入馆。', 'PUBLISHED', '2026-05-28 09:00:00'
+INSERT INTO notice (title, content, display_position, priority, status, published_at)
+SELECT '雨林馆维护提示', '热带雨林馆每日12:30至13:00进行环境维护，期间暂停入馆。', 'MEMBER', 10, 'PUBLISHED', '2026-05-28 09:00:00'
 WHERE NOT EXISTS (SELECT 1 FROM notice WHERE title = '雨林馆维护提示');
 
 INSERT INTO operation_log (operator_id, action, resource, detail, ip, created_at)

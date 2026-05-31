@@ -23,6 +23,8 @@ vi.mock('../api/modules', () => ({
   memberApi: {
     profiles: vi.fn(),
     coupons: vi.fn(),
+    availableCoupons: vi.fn(),
+    notices: vi.fn(),
     annualPasses: vi.fn(),
     createProfile: vi.fn(),
     updateProfile: vi.fn(),
@@ -42,6 +44,8 @@ describe('database-backed auth behavior', () => {
     vi.mocked(paymentApi.prepay).mockReset();
     vi.mocked(memberApi.profiles).mockReset();
     vi.mocked(memberApi.coupons).mockReset();
+    vi.mocked(memberApi.availableCoupons).mockReset();
+    vi.mocked(memberApi.notices).mockReset();
     vi.mocked(memberApi.annualPasses).mockReset();
   });
 
@@ -124,6 +128,8 @@ describe('database-backed auth behavior', () => {
   it('loads member center data from member APIs', async () => {
     vi.mocked(memberApi.profiles).mockResolvedValueOnce([{ id: 1, name: '林小鹿', idCard: '330', phone: '138', relation: '本人', isDefault: true }]);
     vi.mocked(memberApi.coupons).mockResolvedValueOnce([{ id: 1, name: '新客券', threshold: '满 200 减 30', status: '可用', expiresAt: '2026-12-31' }]);
+    vi.mocked(memberApi.availableCoupons).mockResolvedValueOnce([{ id: 2, name: '亲子券', threshold: '满 100 减 10', status: 'ENABLED', expiresAt: '2026-12-31' }]);
+    vi.mocked(memberApi.notices).mockResolvedValueOnce([{ id: 1, title: '端午提醒', content: '请提前预约', status: 'PUBLISHED' }]);
     vi.mocked(memberApi.annualPasses).mockResolvedValueOnce([{ id: 1, name: '亲子年卡', status: 'ACTIVE', expiresAt: '2027-05-28', boundVisitors: ['林小鹿'], benefits: ['全年入园'] }]);
     const member = useMemberStore();
 
@@ -131,8 +137,11 @@ describe('database-backed auth behavior', () => {
 
     expect(memberApi.profiles).toHaveBeenCalled();
     expect(memberApi.coupons).toHaveBeenCalled();
+    expect(memberApi.availableCoupons).toHaveBeenCalled();
+    expect(memberApi.notices).toHaveBeenCalledWith('MEMBER');
     expect(memberApi.annualPasses).toHaveBeenCalled();
     expect(member.defaultProfile?.name).toBe('林小鹿');
     expect(member.annualPass.name).toBe('亲子年卡');
+    expect(member.notifications[0]?.title).toBe('端午提醒');
   });
 });

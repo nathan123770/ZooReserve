@@ -5,6 +5,7 @@ import type {
   LoginResponse,
   MemberCouponRecord,
   MemberProfileRecord,
+  NoticeRecord,
   OrderRecord,
   PaymentResponse,
   RoleCode,
@@ -40,6 +41,8 @@ export const paymentApi = {
 export const memberApi = {
   profiles: () => getData<MemberProfileRecord[]>('/member/profiles'),
   coupons: () => getData<MemberCouponRecord[]>('/member/coupons'),
+  availableCoupons: () => getData<MemberCouponRecord[]>('/coupons/available'),
+  notices: (position?: string) => getData<NoticeRecord[]>('/notices', position ? { position } : undefined),
   annualPasses: () => getData<AnnualPassRecord[]>('/member/annual-passes'),
   createProfile: (payload: unknown) => postData<MemberProfileRecord>('/member/profiles', payload),
   updateProfile: (id: number, payload: unknown) => putData<MemberProfileRecord>(`/member/profiles/${id}`, payload),

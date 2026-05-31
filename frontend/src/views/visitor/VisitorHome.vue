@@ -1,5 +1,21 @@
 <script setup lang="ts">
-import { CalendarDays, MapPinned, QrCode, Sparkles } from 'lucide-vue-next';
+import { computed, onMounted, ref } from 'vue';
+import { CalendarDays, MapPinned, Megaphone, QrCode, Sparkles } from 'lucide-vue-next';
+import { memberApi } from '@/api/modules';
+import { useAuthStore } from '@/stores/auth';
+import type { MemberCouponRecord, NoticeRecord } from '@/types/api';
+
+const auth = useAuthStore();
+const notices = ref<NoticeRecord[]>([]);
+const availableCoupons = ref<MemberCouponRecord[]>([]);
+const displayedNotices = computed(() => notices.value.slice(0, 3));
+
+onMounted(async () => {
+  notices.value = await memberApi.notices('HOME');
+  if (auth.isAuthenticated && auth.user?.role === 'VISITOR') {
+    availableCoupons.value = await memberApi.availableCoupons();
+  }
+});
 </script>
 
 <template>
@@ -25,6 +41,19 @@ import { CalendarDays, MapPinned, QrCode, Sparkles } from 'lucide-vue-next';
     </div>
   </section>
 
+  <section v-if="displayedNotices.length" class="home-notice-band" aria-label="园区公告">
+    <div class="home-notice-title">
+      <Megaphone :size="18" />
+      <strong>园区公告</strong>
+    </div>
+    <div class="home-notice-list">
+      <article v-for="notice in displayedNotices" :key="notice.id">
+        <strong>{{ notice.title }}</strong>
+        <span>{{ notice.content }}</span>
+      </article>
+    </div>
+  </section>
+
   <section class="visitor-grid">
     <RouterLink class="feature-tile" to="/booking">
       <CalendarDays />
@@ -40,6 +69,11 @@ import { CalendarDays, MapPinned, QrCode, Sparkles } from 'lucide-vue-next';
       <QrCode />
       <strong>入园凭证</strong>
       <span>二维码醒目展示，核销状态同步</span>
+    </RouterLink>
+    <RouterLink class="feature-tile" to="/member">
+      <Sparkles />
+      <strong>优惠券</strong>
+      <span>{{ availableCoupons.length ? `${availableCoupons.length} 张优惠券可领取` : '登录后领取可用优惠券' }}</span>
     </RouterLink>
   </section>
 </template>
