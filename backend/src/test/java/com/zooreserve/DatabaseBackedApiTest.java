@@ -13,6 +13,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.hasKey;
+import static org.hamcrest.Matchers.hasSize;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -101,6 +102,12 @@ class DatabaseBackedApiTest {
             .content("{\"visitDate\":\"2026-06-01\",\"session\":\"AM\",\"items\":[{\"ticketTypeCode\":\"ADULT\",\"quantity\":2}]}"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.orderNo").isString())
+        .andExpect(jsonPath("$.data.orderType").value("TICKET"))
+        .andExpect(jsonPath("$.data.originalAmount").value(240.0))
+        .andExpect(jsonPath("$.data.discountAmount").value(0))
+        .andExpect(jsonPath("$.data.items", hasSize(1)))
+        .andExpect(jsonPath("$.data.items[0].ticketTypeCode").value("ADULT"))
+        .andExpect(jsonPath("$.data.items[0].quantity").value(2))
         .andReturn()
         .getResponse()
         .getContentAsString();
@@ -155,6 +162,11 @@ class DatabaseBackedApiTest {
             .content("{\"visitDate\":\"2026-06-01\",\"session\":\"PM\",\"couponId\":" + couponId + ",\"items\":[{\"ticketTypeCode\":\"ADULT\",\"quantity\":2}]}"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.amount").value(210.0))
+        .andExpect(jsonPath("$.data.orderType").value("TICKET"))
+        .andExpect(jsonPath("$.data.originalAmount").value(240.0))
+        .andExpect(jsonPath("$.data.discountAmount").value(30.0))
+        .andExpect(jsonPath("$.data.items[0].ticketTypeCode").value("ADULT"))
+        .andExpect(jsonPath("$.data.items[0].quantity").value(2))
         .andReturn()
         .getResponse()
         .getContentAsString();
@@ -190,7 +202,9 @@ class DatabaseBackedApiTest {
     mockMvc.perform(post("/api/orders/" + cancelId + "/cancel")
             .header("Authorization", "Bearer " + visitorToken))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.data.orderStatus").value("CANCELLED"));
+        .andExpect(jsonPath("$.data.orderStatus").value("CANCELLED"))
+        .andExpect(jsonPath("$.data.items[0].ticketTypeCode").value("CHILD"))
+        .andExpect(jsonPath("$.data.originalAmount").value(60.0));
     assertThat(jdbcTemplate.queryForObject("""
         SELECT ti.remaining
         FROM ticket_inventory ti
@@ -201,7 +215,9 @@ class DatabaseBackedApiTest {
     mockMvc.perform(post("/api/orders/" + discountedNo + "/refund")
             .header("Authorization", "Bearer " + visitorToken))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.data.orderStatus").value("REFUNDING"));
+        .andExpect(jsonPath("$.data.orderStatus").value("REFUNDING"))
+        .andExpect(jsonPath("$.data.items[0].ticketTypeCode").value("ADULT"))
+        .andExpect(jsonPath("$.data.discountAmount").value(30.0));
     Long refundId = jdbcTemplate.queryForObject("""
         SELECT rr.id
         FROM refund_record rr
@@ -220,6 +236,10 @@ class DatabaseBackedApiTest {
             .content("{\"visitDate\":\"2026-06-03\",\"session\":\"AM\",\"orderType\":\"ANNUAL_PASS\",\"annualPassId\":" + annualPassId + ",\"items\":[{\"ticketTypeCode\":\"ADULT\",\"quantity\":1}]}"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.amount").value(0))
+        .andExpect(jsonPath("$.data.orderType").value("ANNUAL_PASS"))
+        .andExpect(jsonPath("$.data.originalAmount").value(120.0))
+        .andExpect(jsonPath("$.data.discountAmount").value(120.0))
+        .andExpect(jsonPath("$.data.items[0].ticketTypeCode").value("ADULT"))
         .andExpect(jsonPath("$.data.paymentStatus").value("PAY_SUCCESS"))
         .andReturn()
         .getResponse()
@@ -234,6 +254,40 @@ class DatabaseBackedApiTest {
         .andExpect(jsonPath("$.data.checkinStatus").value("CHECKED_IN"));
     assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM annual_pass_usage WHERE annual_pass_id = ?", Integer.class, annualPassId))
         .isEqualTo(1);
+
+    java.sql.Date beforeRenewExpiresAt = jdbcTemplate.queryForObject("SELECT expires_at FROM annual_pass WHERE id = ?",
+        java.sql.Date.class, annualPassId);
+    String renewalJson = mockMvc.perform(post("/api/orders")
+            .header("Authorization", "Bearer " + visitorToken)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"visitDate\":\"2026-06-03\",\"session\":\"AM\",\"orderType\":\"ANNUAL_PASS_RENEWAL\",\"annualPassId\":" + annualPassId + ",\"items\":[{\"ticketTypeCode\":\"ANNUAL\",\"quantity\":1}]}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.orderType").value("ANNUAL_PASS_RENEWAL"))
+        .andExpect(jsonPath("$.data.amount").value(699.0))
+        .andExpect(jsonPath("$.data.paymentStatus").value("UNPAID"))
+        .andReturn()
+        .getResponse()
+        .getContentAsString();
+    String renewalNo = renewalJson.split("\"orderNo\":\"")[1].split("\"")[0];
+    assertThat(jdbcTemplate.queryForObject("SELECT expires_at FROM annual_pass WHERE id = ?",
+        java.sql.Date.class, annualPassId)).isEqualTo(beforeRenewExpiresAt);
+
+    mockMvc.perform(post("/api/payments/prepay")
+            .header("Authorization", "Bearer " + visitorToken)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"orderNo\":\"" + renewalNo + "\",\"channel\":\"MOCK\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.paymentStatus").value("PAY_SUCCESS"));
+    assertThat(jdbcTemplate.queryForObject("SELECT expires_at FROM annual_pass WHERE id = ?",
+        java.sql.Date.class, annualPassId).toLocalDate()).isAfter(beforeRenewExpiresAt.toLocalDate());
+
+    mockMvc.perform(get("/api/orders/my")
+            .header("Authorization", "Bearer " + visitorToken))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data[0].orderType").isString())
+        .andExpect(jsonPath("$.data[0].originalAmount").exists())
+        .andExpect(jsonPath("$.data[0].discountAmount").exists())
+        .andExpect(jsonPath("$.data[0].items").isArray());
   }
 
   @Test

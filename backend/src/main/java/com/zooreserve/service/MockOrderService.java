@@ -7,6 +7,7 @@ import com.zooreserve.dto.CheckinDtos.CheckinResponse;
 import com.zooreserve.dto.CheckinDtos.ManualCheckinRequest;
 import com.zooreserve.dto.CheckinDtos.ScanRequest;
 import com.zooreserve.dto.OrderDtos.CreateOrderRequest;
+import com.zooreserve.dto.OrderDtos.OrderItemResponse;
 import com.zooreserve.dto.OrderDtos.OrderItemRequest;
 import com.zooreserve.dto.OrderDtos.OrderResponse;
 import com.zooreserve.dto.OrderDtos.QrCodeResponse;
@@ -43,6 +44,9 @@ public class MockOrderService {
       throw new IllegalStateException("请选择票种");
     }
     String session = request.session() == null || request.session().isBlank() ? "AM" : request.session();
+    String requestedOrderType = request.orderType() == null ? "TICKET" : request.orderType();
+    boolean annualPassProductOrder = "ANNUAL_PASS_PURCHASE".equalsIgnoreCase(requestedOrderType)
+        || "ANNUAL_PASS_RENEWAL".equalsIgnoreCase(requestedOrderType);
     Long userId = currentVisitorId();
     BigDecimal originalAmount = BigDecimal.ZERO;
     int people = 0;
@@ -50,7 +54,8 @@ public class MockOrderService {
     for (var item : items) {
       Map<String, Object> ticket = ticketByCode(item.ticketTypeCode());
       int quantity = Math.max(1, item.quantity());
-      int dailyUpdated = jdbcTemplate.update("""
+      if (!annualPassProductOrder) {
+        int dailyUpdated = jdbcTemplate.update("""
           UPDATE daily_ticket_inventory
           SET remaining = remaining - ?
           WHERE visit_date = ? AND ticket_type_id = ? AND remaining >= ?
@@ -66,12 +71,18 @@ public class MockOrderService {
       if (updated == 0) {
         throw new IllegalStateException("库存不足");
       }
+      }
       originalAmount = originalAmount.add(((BigDecimal) ticket.get("price")).multiply(BigDecimal.valueOf(quantity)));
       people += quantity;
     }
 
-    boolean annualPassOrder = "ANNUAL_PASS".equalsIgnoreCase(request.orderType()) || request.annualPassId() != null;
-    Long annualPassId = annualPassOrder ? validateAnnualPass(userId, request.annualPassId(), request.visitDate()) : null;
+    boolean annualPassOrder = "ANNUAL_PASS".equalsIgnoreCase(requestedOrderType);
+    boolean annualPassRenewal = "ANNUAL_PASS_RENEWAL".equalsIgnoreCase(requestedOrderType);
+    String orderType = annualPassOrder ? "ANNUAL_PASS"
+        : annualPassRenewal ? "ANNUAL_PASS_RENEWAL"
+        : "ANNUAL_PASS_PURCHASE".equalsIgnoreCase(requestedOrderType) ? "ANNUAL_PASS_PURCHASE" : "TICKET";
+    Long annualPassId = annualPassOrder ? validateAnnualPass(userId, request.annualPassId(), request.visitDate())
+        : annualPassRenewal ? validateOwnedAnnualPass(userId, request.annualPassId()) : null;
     Long couponId = annualPassOrder ? null : request.couponId();
     BigDecimal discountAmount = annualPassOrder ? originalAmount : discountFor(userId, couponId, originalAmount, request.visitDate());
     BigDecimal amount = annualPassOrder ? BigDecimal.ZERO : originalAmount.subtract(discountAmount).max(BigDecimal.ZERO);
@@ -83,7 +94,6 @@ public class MockOrderService {
     BigDecimal finalOriginalAmount = originalAmount;
     BigDecimal finalDiscountAmount = discountAmount;
     BigDecimal finalAmount = amount;
-    int finalPeople = people;
     jdbcTemplate.update(connection -> {
       var statement = connection.prepareStatement("""
           INSERT INTO reservation_order
@@ -95,7 +105,7 @@ public class MockOrderService {
       statement.setLong(2, userId);
       statement.setDate(3, Date.valueOf(request.visitDate()));
       statement.setString(4, session);
-      statement.setString(5, annualPassOrder ? "ANNUAL_PASS" : "TICKET");
+      statement.setString(5, orderType);
       statement.setBigDecimal(6, finalOriginalAmount);
       statement.setBigDecimal(7, finalDiscountAmount);
       statement.setBigDecimal(8, finalAmount);
@@ -117,14 +127,14 @@ public class MockOrderService {
           VALUES (?, ?, ?, ?)
           """, orderId, ticket.get("id"), Math.max(1, item.quantity()), ticket.get("price"));
     }
-    return new OrderResponse(orderId, orderNo, request.visitDate(), session, finalPeople, finalAmount,
-        OrderStatus.valueOf(orderStatus), PaymentStatus.valueOf(paymentStatus), LocalDateTime.now());
+    return responseById(orderId);
   }
 
   public List<OrderResponse> myOrders() {
     Long userId = currentVisitorId();
     return jdbcTemplate.query("""
-        SELECT id, order_no, visit_date, session_code, amount, order_status, payment_status, created_at,
+        SELECT id, order_no, visit_date, session_code, order_type, original_amount, discount_amount,
+               amount, order_status, payment_status, created_at,
                COALESCE((SELECT SUM(quantity) FROM order_item WHERE order_id = reservation_order.id), 0) people_count
         FROM reservation_order
         WHERE user_id = ?
@@ -172,6 +182,9 @@ public class MockOrderService {
         SET status = 'USED', used_at = CURRENT_TIMESTAMP
         WHERE order_id = ? AND status = 'LOCKED'
         """, order.get("id"));
+    if ("ANNUAL_PASS_RENEWAL".equals(order.get("order_type")) && order.get("annual_pass_id") != null) {
+      renewAnnualPassAfterPayment(order.get("annual_pass_id"));
+    }
     return new PrepayResponse(request.orderNo(), channel, (BigDecimal) order.get("amount"),
         PaymentStatus.PAY_SUCCESS, "mock://pay/" + request.orderNo());
   }
@@ -256,7 +269,8 @@ public class MockOrderService {
 
   public OrderResponse seedOrder() {
     return jdbcTemplate.query("""
-        SELECT id, order_no, visit_date, session_code, amount, order_status, payment_status, created_at,
+        SELECT id, order_no, visit_date, session_code, order_type, original_amount, discount_amount,
+               amount, order_status, payment_status, created_at,
                COALESCE((SELECT SUM(quantity) FROM order_item WHERE order_id = reservation_order.id), 0) people_count
         FROM reservation_order
         ORDER BY id
@@ -270,7 +284,7 @@ public class MockOrderService {
 
   private Map<String, Object> orderByNo(String orderNo) {
     return jdbcTemplate.queryForMap("""
-        SELECT id, order_no, visit_date, amount, order_status, payment_status, annual_pass_id
+        SELECT id, order_no, visit_date, order_type, amount, order_status, payment_status, annual_pass_id
         FROM reservation_order
         WHERE order_no = ?
         """, orderNo);
@@ -278,7 +292,7 @@ public class MockOrderService {
 
   private Map<String, Object> orderById(Long id) {
     return jdbcTemplate.queryForMap("""
-        SELECT id, order_no, visit_date, amount, order_status, payment_status, annual_pass_id
+        SELECT id, order_no, visit_date, order_type, amount, order_status, payment_status, annual_pass_id
         FROM reservation_order
         WHERE id = ?
         """, id);
@@ -342,6 +356,35 @@ public class MockOrderService {
     return annualPassId;
   }
 
+  private Long validateOwnedAnnualPass(Long userId, Long annualPassId) {
+    if (annualPassId == null) {
+      throw new IllegalStateException("请选择需要续费的年卡");
+    }
+    Integer count = jdbcTemplate.queryForObject("""
+        SELECT COUNT(*)
+        FROM annual_pass
+        WHERE id = ? AND user_id = ?
+        """, Integer.class, annualPassId, userId);
+    if (count == null || count == 0) {
+      throw new IllegalStateException("年卡不存在或不属于当前用户");
+    }
+    return annualPassId;
+  }
+
+  private void renewAnnualPassAfterPayment(Object annualPassId) {
+    Map<String, Object> pass = jdbcTemplate.queryForMap("""
+        SELECT ap.expires_at, app.valid_days
+        FROM annual_pass ap
+        JOIN annual_pass_plan app ON app.id = ap.plan_id
+        WHERE ap.id = ?
+        """, annualPassId);
+    LocalDate currentExpiresAt = ((Date) pass.get("expires_at")).toLocalDate();
+    LocalDate baseDate = currentExpiresAt.isAfter(LocalDate.now()) ? currentExpiresAt : LocalDate.now();
+    LocalDate renewedExpiresAt = baseDate.plusDays(((Number) pass.get("valid_days")).longValue());
+    jdbcTemplate.update("UPDATE annual_pass SET expires_at = ?, status = 'ACTIVE' WHERE id = ?",
+        Date.valueOf(renewedExpiresAt), annualPassId);
+  }
+
   private BigDecimal discountFor(Long userId, Long userCouponId, BigDecimal originalAmount, LocalDate visitDate) {
     if (userCouponId == null) {
       return BigDecimal.ZERO;
@@ -394,7 +437,8 @@ public class MockOrderService {
 
   private OrderResponse responseById(Long id) {
     return jdbcTemplate.query("""
-        SELECT id, order_no, visit_date, session_code, amount, order_status, payment_status, created_at,
+        SELECT id, order_no, visit_date, session_code, order_type, original_amount, discount_amount,
+               amount, order_status, payment_status, created_at,
                COALESCE((SELECT SUM(quantity) FROM order_item WHERE order_id = reservation_order.id), 0) people_count
         FROM reservation_order
         WHERE id = ?
@@ -442,10 +486,23 @@ public class MockOrderService {
   }
 
   private OrderResponse mapOrder(java.sql.ResultSet rs) throws java.sql.SQLException {
-    return new OrderResponse(rs.getLong("id"), rs.getString("order_no"), rs.getDate("visit_date").toLocalDate(),
+    Long orderId = rs.getLong("id");
+    return new OrderResponse(orderId, rs.getString("order_no"), rs.getDate("visit_date").toLocalDate(),
         rs.getString("session_code"), rs.getInt("people_count"), rs.getBigDecimal("amount"),
         OrderStatus.valueOf(rs.getString("order_status")), PaymentStatus.valueOf(rs.getString("payment_status")),
-        rs.getTimestamp("created_at").toLocalDateTime());
+        rs.getTimestamp("created_at").toLocalDateTime(), rs.getString("order_type"),
+        rs.getBigDecimal("original_amount"), rs.getBigDecimal("discount_amount"), orderItems(orderId));
+  }
+
+  private List<OrderItemResponse> orderItems(Long orderId) {
+    return jdbcTemplate.query("""
+        SELECT tt.code, tt.name, oi.quantity, oi.unit_price
+        FROM order_item oi
+        JOIN ticket_type tt ON tt.id = oi.ticket_type_id
+        WHERE oi.order_id = ?
+        ORDER BY oi.id
+        """, (rs, rowNum) -> new OrderItemResponse(rs.getString("code"), rs.getString("name"),
+        rs.getInt("quantity"), rs.getBigDecimal("unit_price")), orderId);
   }
 
   private Long generatedId(GeneratedKeyHolder keyHolder) {

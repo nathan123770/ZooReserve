@@ -67,6 +67,10 @@ describe('database-backed auth behavior', () => {
       orderStatus: 'PENDING_PAYMENT',
       paymentStatus: 'UNPAID',
       createdAt: '2026-05-28T10:00:00',
+      orderType: 'TICKET',
+      originalAmount: 240,
+      discountAmount: 0,
+      items: [{ ticketTypeCode: 'ADULT', ticketTypeName: '成人票', quantity: 2, unitPrice: 120 }],
     });
     const order = useOrderStore();
 
@@ -104,6 +108,10 @@ describe('database-backed auth behavior', () => {
       orderStatus: 'PENDING_PAYMENT',
       paymentStatus: 'UNPAID',
       createdAt: '2026-05-28T10:00:00',
+      orderType: 'TICKET',
+      originalAmount: 240,
+      discountAmount: 0,
+      items: [{ ticketTypeCode: 'ADULT', ticketTypeName: '成人票', quantity: 2, unitPrice: 120 }],
     }];
 
     await order.payOrder(order.orders[0]);

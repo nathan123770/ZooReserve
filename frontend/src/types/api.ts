@@ -46,6 +46,17 @@ export interface OrderRecord {
   orderStatus: string;
   paymentStatus: string;
   createdAt: string;
+  orderType: string;
+  originalAmount: number;
+  discountAmount: number;
+  items: OrderItemRecord[];
+}
+
+export interface OrderItemRecord {
+  ticketTypeCode: string;
+  ticketTypeName: string;
+  quantity: number;
+  unitPrice: number;
 }
 
 export interface PaymentResponse {

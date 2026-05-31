@@ -1,12 +1,17 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue';
 import { ElMessageBox } from 'element-plus';
+import { useRouter } from 'vue-router';
 import { Bell, CreditCard, Edit3, Star, TicketPercent, UserPlus, Users } from 'lucide-vue-next';
+import { annualPassProducts } from '@/stores/booking';
 import { useMemberStore } from '@/stores/member';
+import { useOrderStore } from '@/stores/order';
 import type { MemberProfile } from '@/stores/member';
 import { toast } from '@/utils/message';
 
 const member = useMemberStore();
+const orderStore = useOrderStore();
+const router = useRouter();
 const profileDialogVisible = ref(false);
 const editingProfileId = ref<number | undefined>();
 const profileForm = reactive({
@@ -54,6 +59,37 @@ async function deleteProfile(profile: MemberProfile) {
   });
   await member.deleteProfile(profile.id);
   toast.success('常用游客已删除');
+}
+
+async function renewAnnualPass() {
+  if (!member.annualPass.id) return;
+  const product = annualPassProducts[0];
+  await ElMessageBox.confirm(
+    `${member.annualPass.name} 将生成一笔续费订单，支付成功后有效期顺延一年。\n应付：¥${product.price}`,
+    '续费年卡',
+    { confirmButtonText: '提交续费订单', cancelButtonText: '再看看', type: 'info' },
+  );
+  const order = await orderStore.createReservation({
+    visitDate: new Date().toISOString().slice(0, 10),
+    session: 'AM',
+    items: [{ ticketTypeCode: product.code, quantity: 1 }],
+    annualPassId: member.annualPass.id,
+    orderType: 'ANNUAL_PASS_RENEWAL',
+  });
+
+  try {
+    await ElMessageBox.confirm(`续费订单 ${order.orderNo} 已提交，是否立即模拟支付？`, '提交成功', {
+      confirmButtonText: '立即支付',
+      cancelButtonText: '去订单页',
+      type: 'success',
+    });
+    await orderStore.payOrder(order);
+    await member.loadAll();
+    toast.success('续费成功，年卡有效期已更新');
+  } catch {
+    toast.info('续费订单已创建，可稍后在订单页继续支付');
+    await router.push({ name: 'my-orders' });
+  }
 }
 </script>
 
@@ -126,7 +162,7 @@ async function deleteProfile(profile: MemberProfile) {
           <ul>
             <li v-for="benefit in member.annualPass.benefits" :key="benefit">{{ benefit }}</li>
           </ul>
-          <el-button plain type="success" :disabled="!member.annualPass.id" @click="member.renewAnnualPass()">续费一年</el-button>
+          <el-button plain type="success" :disabled="!member.annualPass.id" @click="renewAnnualPass">续费一年</el-button>
         </section>
 
         <section class="member-panel">

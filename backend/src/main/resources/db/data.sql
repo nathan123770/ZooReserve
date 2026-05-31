@@ -207,6 +207,11 @@ WHERE u.username = 'family01'
 INSERT IGNORE INTO annual_pass_plan (code, name, price, valid_days, holder_limit, benefits, status) VALUES
 ('FAMILY', '亲子年卡', 699.00, 365, 3, '全年不限次入园,活动优先报名,餐饮95折', 'ENABLED');
 
+UPDATE annual_pass_plan
+SET name = '亲子年卡',
+    benefits = '全年不限次入园,活动优先报名,餐饮95折'
+WHERE code = 'FAMILY';
+
 INSERT INTO annual_pass (user_id, plan_id, pass_no, started_at, expires_at, status)
 SELECT u.id, p.id, 'AP202605280001', '2026-05-28', '2027-05-28', 'ACTIVE'
 FROM user u
