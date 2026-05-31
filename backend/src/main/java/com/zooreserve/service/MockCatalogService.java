@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 
 @Service
 public class MockCatalogService {
@@ -55,11 +56,12 @@ public class MockCatalogService {
   public List<ActivityResponse> activities() {
     return jdbcTemplate.query("""
         SELECT a.id, a.title, a.category, a.start_time, a.capacity, a.location,
+               a.is_paid, a.price, a.coupon_scope,
                COUNT(s.id) AS signed_count
         FROM activity a
         LEFT JOIN activity_signup s ON s.activity_id = a.id AND s.status = 'SIGNED'
         WHERE a.status = 'PUBLISHED'
-        GROUP BY a.id, a.title, a.category, a.start_time, a.capacity, a.location
+        GROUP BY a.id, a.title, a.category, a.start_time, a.capacity, a.location, a.is_paid, a.price, a.coupon_scope
         ORDER BY a.start_time
         """, (rs, rowNum) -> new ActivityResponse(
         rs.getLong("id"),
@@ -68,7 +70,10 @@ public class MockCatalogService {
         rs.getTimestamp("start_time").toLocalDateTime(),
         rs.getInt("capacity"),
         rs.getInt("signed_count"),
-        rs.getString("location")));
+        rs.getString("location"),
+        rs.getInt("is_paid") == 1,
+        rs.getBigDecimal("price"),
+        rs.getString("coupon_scope")));
   }
 
   public void signup(Long activityId, Long userId) {
@@ -78,7 +83,11 @@ public class MockCatalogService {
     if (existing != null && existing > 0) {
       return;
     }
-    Integer capacity = jdbcTemplate.queryForObject("SELECT capacity FROM activity WHERE id = ?", Integer.class, activityId);
+    Map<String, Object> activity = jdbcTemplate.queryForMap("SELECT capacity, is_paid FROM activity WHERE id = ? AND status = 'PUBLISHED'", activityId);
+    if (((Number) activity.get("is_paid")).intValue() == 1) {
+      throw new IllegalStateException("收费活动请先提交订单并完成支付");
+    }
+    Integer capacity = ((Number) activity.get("capacity")).intValue();
     Integer signed = jdbcTemplate.queryForObject(
         "SELECT COUNT(*) FROM activity_signup WHERE activity_id = ? AND status = 'SIGNED'",
         Integer.class, activityId);

@@ -49,8 +49,9 @@ INSERT INTO reservation_order (id, order_no, user_id, visit_date, session_code, 
 INSERT INTO order_item (order_id, ticket_type_id, quantity, unit_price) VALUES
 (1, 1, 2, 120.00);
 
-INSERT INTO activity (id, title, category, start_time, capacity, location, status) VALUES
-(1, '长颈鹿科普讲解', '科普讲解', '2026-06-01 10:00:00', 40, '草食动物区', 'PUBLISHED');
+INSERT INTO activity (id, title, category, start_time, capacity, location, is_paid, price, coupon_scope, status) VALUES
+(1, '长颈鹿科普讲解', '科普讲解', '2026-06-01 10:00:00', 40, '草食动物区', 0, 0.00, 'ACTIVITY', 'PUBLISHED'),
+(2, '夏夜动物园', '夜游活动', '2026-06-02 19:00:00', 100, '主入口集合', 1, 128.00, 'ACTIVITY_NIGHT', 'PUBLISHED');
 
 INSERT INTO activity_signup (activity_id, user_id, status) VALUES
 (1, 1, 'SIGNED');
@@ -62,10 +63,14 @@ INSERT INTO animal (id, zone_id, name, species, description, media_url, status) 
 (1, 1, '星星', '长颈鹿', '温和的长颈鹿', '/media/animals/giraffe.jpg', 'VISIBLE');
 
 INSERT INTO coupon (id, name, discount_type, discount_value, threshold_amount, total_quantity, claimed_quantity, valid_from, valid_to, scope, status) VALUES
-(1, '新客满200减30', 'AMOUNT', 30.00, 200.00, 1000, 1, '2026-01-01', '2026-12-31', 'TICKET', 'ENABLED');
+(1, '新客满200减30', 'AMOUNT', 30.00, 200.00, 1000, 1, '2026-01-01', '2026-12-31', 'TICKET', 'ENABLED'),
+(2, '夜游活动满100减20', 'AMOUNT', 20.00, 100.00, 1000, 1, '2026-01-01', '2026-12-31', 'ACTIVITY_NIGHT', 'ENABLED'),
+(3, '亲子课堂满80减10', 'AMOUNT', 10.00, 80.00, 1000, 1, '2026-01-01', '2026-12-31', 'ACTIVITY_PARENT_CHILD', 'ENABLED');
 
 INSERT INTO user_coupon (id, user_id, coupon_id, status) VALUES
-(1, 1, 1, 'UNUSED');
+(1, 1, 1, 'UNUSED'),
+(2, 1, 2, 'UNUSED'),
+(3, 1, 3, 'UNUSED');
 
 INSERT INTO annual_pass_plan (id, code, name, price, valid_days, holder_limit, benefits, status) VALUES
 (1, 'FAMILY', '亲子年卡', 699.00, 365, 3, '全年不限次入园,活动优先报名,餐饮95折', 'ENABLED');

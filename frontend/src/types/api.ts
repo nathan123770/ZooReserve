@@ -122,4 +122,7 @@ export interface ActivityRecord {
   capacity: number;
   signedCount: number;
   location: string;
+  paid: boolean;
+  price: number;
+  couponScope: string;
 }

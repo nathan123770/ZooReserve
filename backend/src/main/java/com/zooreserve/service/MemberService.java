@@ -2,6 +2,7 @@ package com.zooreserve.service;
 
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
@@ -150,8 +151,20 @@ public class MemberService {
         || (validTo != null && today.isAfter(validTo.toLocalDate()))) {
       throw new IllegalStateException("优惠券不在领取期内");
     }
-    jdbcTemplate.update("INSERT INTO user_coupon (user_id, coupon_id, status) VALUES (?, ?, 'UNUSED')", userId, couponId);
-    jdbcTemplate.update("UPDATE coupon SET claimed_quantity = claimed_quantity + 1 WHERE id = ?", couponId);
+    int updated = jdbcTemplate.update("""
+        UPDATE coupon
+        SET claimed_quantity = claimed_quantity + 1
+        WHERE id = ? AND status = 'ENABLED'
+          AND (total_quantity IS NULL OR claimed_quantity < total_quantity)
+        """, couponId);
+    if (updated == 0) {
+      throw new IllegalStateException("浼樻儬鍒稿凡棰嗗畬");
+    }
+    try {
+      jdbcTemplate.update("INSERT INTO user_coupon (user_id, coupon_id, status) VALUES (?, ?, 'UNUSED')", userId, couponId);
+    } catch (DuplicateKeyException exception) {
+      throw new IllegalStateException("浼樻儬鍒稿凡棰嗗彇");
+    }
     return Map.of("claimed", true, "couponId", couponId);
   }
 

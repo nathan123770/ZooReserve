@@ -15,11 +15,13 @@ const orderTypeText: Record<string, string> = {
   ANNUAL_PASS: '年卡权益预约',
   ANNUAL_PASS_PURCHASE: '年卡购买',
   ANNUAL_PASS_RENEWAL: '年卡续费',
+  ACTIVITY: '活动报名',
 };
 
 const sessionText: Record<string, string> = {
   AM: '上午场',
   PM: '下午场',
+  ACTIVITY: '活动',
 };
 
 interface DisplayPurchaseItem {
@@ -27,7 +29,7 @@ interface DisplayPurchaseItem {
   name: string;
   quantity: number;
   unitPrice: number;
-  kind: '门票' | '年卡' | '年卡权益';
+  kind: '门票' | '年卡' | '年卡权益' | '活动';
 }
 
 onMounted(() => orderStore.loadMine());
@@ -89,6 +91,10 @@ function isAnnualPassItem(row: OrderRecord, item: OrderItemRecord) {
   return isAnnualPassPurchase(row) || item.ticketTypeCode === 'ANNUAL' || itemName(item).includes('年卡');
 }
 
+function isActivityItem(item: OrderItemRecord) {
+  return item.ticketTypeCode.startsWith('ACTIVITY:');
+}
+
 function knownTicket(code: string) {
   return bookingTickets.find((ticket) => ticket.code === code);
 }
@@ -139,7 +145,7 @@ function purchaseItems(row: OrderRecord): DisplayPurchaseItem[] {
       name: itemName(item),
       quantity: item.quantity,
       unitPrice: item.unitPrice,
-      kind: isAnnualPassItem(row, item) ? '年卡' : '门票',
+      kind: isActivityItem(item) ? '活动' : isAnnualPassItem(row, item) ? '年卡' : '门票',
     }));
   }
 

@@ -144,6 +144,7 @@ class DatabaseBackedApiTest {
   @Test
   void orderCouponCancelRefundAndAnnualPassFlowPersistsToDatabase() throws Exception {
     String visitorToken = tokenFor("visitor", "visitor123", "VISITOR");
+    String familyToken = tokenFor("family01", "visitor123", "VISITOR");
     String adminToken = tokenFor("admin", "admin123", "ADMIN");
 
     Long couponId = jdbcTemplate.queryForObject("""
@@ -199,6 +200,10 @@ class DatabaseBackedApiTest {
         .getResponse()
         .getContentAsString();
     Long cancelId = Long.valueOf(cancelJson.split("\"id\":")[1].split(",")[0]);
+    mockMvc.perform(post("/api/orders/" + cancelId + "/cancel")
+            .header("Authorization", "Bearer " + familyToken))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.message").value("订单不存在"));
     mockMvc.perform(post("/api/orders/" + cancelId + "/cancel")
             .header("Authorization", "Bearer " + visitorToken))
         .andExpect(status().isOk())
@@ -291,6 +296,62 @@ class DatabaseBackedApiTest {
   }
 
   @Test
+  void activityOrdersUseActivityCouponsAndSignupAfterPayment() throws Exception {
+    String visitorToken = tokenFor("visitor", "visitor123", "VISITOR");
+
+    Integer beforeFreeSignup = jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM activity_signup WHERE activity_id = 1 AND user_id = 1 AND status = 'SIGNED'",
+        Integer.class);
+    mockMvc.perform(post("/api/activities/1/signup")
+            .header("Authorization", "Bearer " + visitorToken))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.status").value("SIGNED"));
+    assertThat(jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM activity_signup WHERE activity_id = 1 AND user_id = 1 AND status = 'SIGNED'",
+        Integer.class)).isEqualTo(beforeFreeSignup);
+
+    Long nightCouponId = jdbcTemplate.queryForObject("""
+        SELECT uc.id
+        FROM user_coupon uc
+        JOIN coupon c ON c.id = uc.coupon_id
+        WHERE uc.user_id = 1 AND uc.status = 'UNUSED' AND c.scope = 'ACTIVITY_NIGHT'
+        """, Long.class);
+    String activityOrderJson = mockMvc.perform(post("/api/orders")
+            .header("Authorization", "Bearer " + visitorToken)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"orderType\":\"ACTIVITY\",\"activityId\":2,\"quantity\":1,\"couponId\":" + nightCouponId + "}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.orderType").value("ACTIVITY"))
+        .andExpect(jsonPath("$.data.originalAmount").value(128.0))
+        .andExpect(jsonPath("$.data.discountAmount").value(20.0))
+        .andExpect(jsonPath("$.data.amount").value(108.0))
+        .andExpect(jsonPath("$.data.paymentStatus").value("UNPAID"))
+        .andExpect(jsonPath("$.data.items[0].ticketTypeCode").value("ACTIVITY:2"))
+        .andExpect(jsonPath("$.data.items[0].ticketTypeName").value("夏夜动物园"))
+        .andReturn()
+        .getResponse()
+        .getContentAsString();
+    String activityOrderNo = activityOrderJson.split("\"orderNo\":\"")[1].split("\"")[0];
+    assertThat(jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM activity_signup WHERE activity_id = 2 AND user_id = 1 AND status = 'SIGNED'",
+        Integer.class)).isEqualTo(0);
+    assertThat(jdbcTemplate.queryForObject("SELECT status FROM user_coupon WHERE id = ?", String.class, nightCouponId))
+        .isEqualTo("LOCKED");
+
+    mockMvc.perform(post("/api/payments/prepay")
+            .header("Authorization", "Bearer " + visitorToken)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"orderNo\":\"" + activityOrderNo + "\",\"channel\":\"MOCK\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.paymentStatus").value("PAY_SUCCESS"));
+    assertThat(jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM activity_signup WHERE activity_id = 2 AND user_id = 1 AND order_id = (SELECT id FROM reservation_order WHERE order_no = ?) AND status = 'SIGNED'",
+        Integer.class, activityOrderNo)).isEqualTo(1);
+    assertThat(jdbcTemplate.queryForObject("SELECT status FROM user_coupon WHERE id = ?", String.class, nightCouponId))
+        .isEqualTo("USED");
+  }
+
+  @Test
   void memberEndpointsReadAndMutateDatabaseRecords() throws Exception {
     String visitorToken = tokenFor("visitor", "visitor123", "VISITOR");
 
@@ -310,7 +371,7 @@ class DatabaseBackedApiTest {
             .header("Authorization", "Bearer " + visitorToken))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data[0].status").isString())
-        .andExpect(jsonPath("$.data[0].scope").value("TICKET"));
+        .andExpect(jsonPath("$.data[*].scope", hasItem("TICKET")));
 
     mockMvc.perform(get("/api/notices?position=HOME"))
         .andExpect(status().isOk())

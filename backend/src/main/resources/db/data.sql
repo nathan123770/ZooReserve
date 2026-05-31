@@ -111,27 +111,37 @@ SELECT visit_date, ticket_type_id, SUM(capacity), SUM(remaining)
 FROM ticket_inventory
 GROUP BY visit_date, ticket_type_id;
 
-INSERT INTO activity (title, category, start_time, capacity, location, status)
-SELECT '长颈鹿科普讲解', '科普讲解', '2026-06-01 10:00:00', 40, '草食动物区', 'PUBLISHED'
+INSERT INTO activity (title, category, start_time, capacity, location, is_paid, price, coupon_scope, status)
+SELECT '长颈鹿科普讲解', '科普讲解', '2026-06-01 10:00:00', 40, '草食动物区', 0, 0.00, 'ACTIVITY', 'PUBLISHED'
 WHERE NOT EXISTS (SELECT 1 FROM activity WHERE title = '长颈鹿科普讲解' AND start_time = '2026-06-01 10:00:00');
 
-INSERT INTO activity (title, category, start_time, capacity, location, status)
-SELECT '小小饲养员亲子课堂', '亲子课堂', '2026-06-01 14:30:00', 24, '自然教育中心', 'PUBLISHED'
+INSERT INTO activity (title, category, start_time, capacity, location, is_paid, price, coupon_scope, status)
+SELECT '小小饲养员亲子课堂', '亲子课堂', '2026-06-01 14:30:00', 24, '自然教育中心', 1, 88.00, 'ACTIVITY_PARENT_CHILD', 'PUBLISHED'
 WHERE NOT EXISTS (SELECT 1 FROM activity WHERE title = '小小饲养员亲子课堂' AND start_time = '2026-06-01 14:30:00');
 
-INSERT INTO activity (title, category, start_time, capacity, location, status)
-SELECT '夏夜动物园', '夜游活动', '2026-06-02 19:00:00', 100, '主入口集合', 'PUBLISHED'
+INSERT INTO activity (title, category, start_time, capacity, location, is_paid, price, coupon_scope, status)
+SELECT '夏夜动物园', '夜游活动', '2026-06-02 19:00:00', 100, '主入口集合', 1, 128.00, 'ACTIVITY_NIGHT', 'PUBLISHED'
 WHERE NOT EXISTS (SELECT 1 FROM activity WHERE title = '夏夜动物园' AND start_time = '2026-06-02 19:00:00');
 
-INSERT INTO activity (title, category, start_time, capacity, location, status)
-SELECT '雨林探秘导览', '主题导览', '2026-06-03 11:00:00', 35, '热带雨林馆', 'PUBLISHED'
+INSERT INTO activity (title, category, start_time, capacity, location, is_paid, price, coupon_scope, status)
+SELECT '雨林探秘导览', '主题导览', '2026-06-03 11:00:00', 35, '热带雨林馆', 0, 0.00, 'ACTIVITY', 'PUBLISHED'
 WHERE NOT EXISTS (SELECT 1 FROM activity WHERE title = '雨林探秘导览' AND start_time = '2026-06-03 11:00:00');
+
+UPDATE activity
+SET is_paid = CASE WHEN category IN ('亲子课堂', '夜游活动') THEN 1 ELSE 0 END,
+    price = CASE WHEN category = '夜游活动' THEN 128.00 WHEN category = '亲子课堂' THEN 88.00 ELSE 0.00 END,
+    coupon_scope = CASE
+      WHEN category = '夜游活动' THEN 'ACTIVITY_NIGHT'
+      WHEN category = '亲子课堂' THEN 'ACTIVITY_PARENT_CHILD'
+      ELSE 'ACTIVITY'
+    END
+WHERE title IN ('长颈鹿科普讲解', '小小饲养员亲子课堂', '夏夜动物园', '雨林探秘导览');
 
 INSERT IGNORE INTO activity_signup (activity_id, user_id, status)
 SELECT a.id, u.id, 'SIGNED'
 FROM activity a
 JOIN user u ON u.username IN ('visitor', 'family01')
-WHERE a.title IN ('长颈鹿科普讲解', '小小饲养员亲子课堂');
+WHERE a.title IN ('长颈鹿科普讲解', '雨林探秘导览');
 
 INSERT INTO zone (name, description, map_x, map_y)
 SELECT '草食动物区', '长颈鹿、斑马和羚羊共同生活的开放式展区', 31.250000, 48.500000
@@ -173,23 +183,43 @@ FROM zone z
 WHERE z.name = '热带雨林馆'
   AND NOT EXISTS (SELECT 1 FROM animal WHERE name = '小橙' AND species = '金刚鹦鹉');
 
-INSERT IGNORE INTO coupon (name, discount_type, discount_value, status) VALUES
-('新客满200减30', 'AMOUNT', 30.00, 'ENABLED'),
-('亲子套票九折券', 'PERCENT', 0.90, 'ENABLED'),
-('夜游活动满100减20', 'AMOUNT', 20.00, 'ENABLED');
+INSERT INTO coupon (name, discount_type, discount_value, status)
+SELECT '新客满200减30', 'AMOUNT', 30.00, 'ENABLED'
+WHERE NOT EXISTS (SELECT 1 FROM coupon WHERE name = '新客满200减30');
+
+INSERT INTO coupon (name, discount_type, discount_value, status)
+SELECT '亲子套票九折券', 'PERCENT', 0.90, 'ENABLED'
+WHERE NOT EXISTS (SELECT 1 FROM coupon WHERE name = '亲子套票九折券');
+
+INSERT INTO coupon (name, discount_type, discount_value, status)
+SELECT '夜游活动满100减20', 'AMOUNT', 20.00, 'ENABLED'
+WHERE NOT EXISTS (SELECT 1 FROM coupon WHERE name = '夜游活动满100减20');
+
+INSERT INTO coupon (name, discount_type, discount_value, status)
+SELECT '亲子课堂满80减10', 'AMOUNT', 10.00, 'ENABLED'
+WHERE NOT EXISTS (SELECT 1 FROM coupon WHERE name = '亲子课堂满80减10');
 
 UPDATE coupon
-SET threshold_amount = CASE WHEN discount_type = 'AMOUNT' THEN 200.00 ELSE 0.00 END,
+SET threshold_amount = CASE
+      WHEN name = '夜游活动满100减20' THEN 100.00
+      WHEN name = '亲子课堂满80减10' THEN 80.00
+      WHEN discount_type = 'AMOUNT' THEN 200.00
+      ELSE 0.00
+    END,
     total_quantity = COALESCE(total_quantity, 1000),
     valid_from = COALESCE(valid_from, '2026-01-01'),
     valid_to = COALESCE(valid_to, '2026-12-31'),
-    scope = COALESCE(scope, 'TICKET')
-WHERE name IN ('新客满200减30', '亲子套票九折券', '夜游活动满100减20');
+    scope = CASE
+      WHEN name = '夜游活动满100减20' THEN 'ACTIVITY_NIGHT'
+      WHEN name = '亲子课堂满80减10' THEN 'ACTIVITY_PARENT_CHILD'
+      ELSE COALESCE(scope, 'TICKET')
+    END
+WHERE name IN ('新客满200减30', '亲子套票九折券', '夜游活动满100减20', '亲子课堂满80减10');
 
 INSERT INTO user_coupon (user_id, coupon_id, status)
 SELECT u.id, c.id, 'UNUSED'
 FROM user u
-JOIN coupon c ON c.name IN ('新客满200减30', '亲子套票九折券')
+JOIN coupon c ON c.name IN ('新客满200减30', '亲子套票九折券', '夜游活动满100减20', '亲子课堂满80减10')
 WHERE u.username = 'visitor'
   AND NOT EXISTS (
     SELECT 1 FROM user_coupon uc WHERE uc.user_id = u.id AND uc.coupon_id = c.id

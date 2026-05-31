@@ -18,13 +18,15 @@ export const useOrderStore = defineStore('order', () => {
   }
 
   async function createReservation(payload: {
-    visitDate: string;
+    visitDate?: string;
     session: string;
     items: SelectedTicket[];
     couponId?: number;
     annualPassId?: number;
     visitorProfileIds?: number[];
     orderType?: string;
+    activityId?: number;
+    quantity?: number;
   }) {
     const order = await orderApi.create(payload);
     orders.value = [order, ...orders.value];

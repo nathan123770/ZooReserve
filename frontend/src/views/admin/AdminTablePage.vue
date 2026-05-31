@@ -81,7 +81,7 @@ const couponFormFields: AdminFormField[] = [
   { key: 'totalQuantity', label: '发放库存', type: 'number' },
   { key: 'validFrom', label: '有效期开始', type: 'date' },
   { key: 'validTo', label: '有效期结束', type: 'date' },
-  { key: 'scope', label: '适用范围', type: 'select', options: ['TICKET'] },
+  { key: 'scope', label: '适用范围', type: 'select', options: ['TICKET', 'ACTIVITY', 'ACTIVITY_PARENT_CHILD', 'ACTIVITY_NIGHT'] },
   { key: 'status', label: '状态', type: 'select', options: ['ENABLED', 'DISABLED'] },
   { key: 'description', label: '规则说明', type: 'textarea' },
 ];
@@ -117,10 +117,15 @@ const optionLabels: Record<string, string> = {
   AMOUNT: '满减',
   PERCENT: '折扣',
   TICKET: '门票预约',
+  ACTIVITY: '全部收费活动',
+  ACTIVITY_PARENT_CHILD: '亲子课堂',
+  ACTIVITY_NIGHT: '夜游活动',
   ENABLED: '启用',
   DISABLED: '停用',
   PUBLISHED: '已发布',
   DRAFT: '草稿',
+  0: '免费',
+  1: '收费',
 };
 
 function displayText(value: unknown) {
@@ -205,6 +210,8 @@ function defaultValueFor(field: AdminFormField) {
   if (field.key === 'discountType') return 'AMOUNT';
   if (field.key === 'scope') return 'TICKET';
   if (field.key === 'displayPosition') return 'HOME';
+  if (field.key === 'couponScope') return 'ACTIVITY';
+  if (field.key === 'paid') return '0';
   return '';
 }
 

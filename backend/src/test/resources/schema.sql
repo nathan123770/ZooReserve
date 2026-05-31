@@ -13,6 +13,7 @@ DROP TABLE IF EXISTS activity;
 DROP TABLE IF EXISTS checkin_record;
 DROP TABLE IF EXISTS refund_record;
 DROP TABLE IF EXISTS payment_record;
+DROP TABLE IF EXISTS order_activity_item;
 DROP TABLE IF EXISTS order_item;
 DROP TABLE IF EXISTS reservation_order;
 DROP TABLE IF EXISTS daily_ticket_inventory;
@@ -164,6 +165,9 @@ CREATE TABLE activity (
   start_time TIMESTAMP NOT NULL,
   capacity INT NOT NULL,
   location VARCHAR(128),
+  is_paid TINYINT NOT NULL DEFAULT 0,
+  price DECIMAL(10,2) NOT NULL DEFAULT 0,
+  coupon_scope VARCHAR(64) NOT NULL DEFAULT 'ACTIVITY',
   status VARCHAR(32) NOT NULL DEFAULT 'PUBLISHED'
 );
 
@@ -171,9 +175,20 @@ CREATE TABLE activity_signup (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   activity_id BIGINT NOT NULL,
   user_id BIGINT NOT NULL,
+  order_id BIGINT,
   status VARCHAR(32) NOT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE (activity_id, user_id)
+);
+
+CREATE TABLE order_activity_item (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  order_id BIGINT NOT NULL,
+  activity_id BIGINT NOT NULL,
+  activity_title VARCHAR(128) NOT NULL,
+  activity_category VARCHAR(64) NOT NULL,
+  quantity INT NOT NULL,
+  unit_price DECIMAL(10,2) NOT NULL
 );
 
 CREATE TABLE zone (
@@ -215,7 +230,8 @@ CREATE TABLE user_coupon (
   status VARCHAR(32) NOT NULL DEFAULT 'UNUSED',
   order_id BIGINT,
   claimed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  used_at TIMESTAMP
+  used_at TIMESTAMP,
+  UNIQUE (user_id, coupon_id)
 );
 
 CREATE TABLE annual_pass_plan (

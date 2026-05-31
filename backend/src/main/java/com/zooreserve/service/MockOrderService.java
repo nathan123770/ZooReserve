@@ -13,6 +13,7 @@ import com.zooreserve.dto.OrderDtos.OrderResponse;
 import com.zooreserve.dto.OrderDtos.QrCodeResponse;
 import com.zooreserve.dto.PaymentDtos.PrepayRequest;
 import com.zooreserve.dto.PaymentDtos.PrepayResponse;
+import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.security.core.Authentication;
@@ -23,6 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.sql.Date;
 import java.sql.Statement;
+import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -40,11 +42,14 @@ public class MockOrderService {
   @Transactional
   public OrderResponse create(CreateOrderRequest request) {
     List<OrderItemRequest> items = request.items() == null ? List.of() : request.items();
+    String requestedOrderType = request.orderType() == null ? "TICKET" : request.orderType();
+    if ("ACTIVITY".equalsIgnoreCase(requestedOrderType)) {
+      return createActivityOrder(request);
+    }
     if (items.isEmpty()) {
       throw new IllegalStateException("请选择票种");
     }
     String session = request.session() == null || request.session().isBlank() ? "AM" : request.session();
-    String requestedOrderType = request.orderType() == null ? "TICKET" : request.orderType();
     boolean annualPassProductOrder = "ANNUAL_PASS_PURCHASE".equalsIgnoreCase(requestedOrderType)
         || "ANNUAL_PASS_RENEWAL".equalsIgnoreCase(requestedOrderType);
     Long userId = currentVisitorId();
@@ -84,7 +89,7 @@ public class MockOrderService {
     Long annualPassId = annualPassOrder ? validateAnnualPass(userId, request.annualPassId(), request.visitDate())
         : annualPassRenewal ? validateOwnedAnnualPass(userId, request.annualPassId()) : null;
     Long couponId = annualPassOrder ? null : request.couponId();
-    BigDecimal discountAmount = annualPassOrder ? originalAmount : discountFor(userId, couponId, originalAmount, request.visitDate());
+    BigDecimal discountAmount = annualPassOrder ? originalAmount : discountFor(userId, couponId, originalAmount, request.visitDate(), "TICKET");
     BigDecimal amount = annualPassOrder ? BigDecimal.ZERO : originalAmount.subtract(discountAmount).max(BigDecimal.ZERO);
     String orderStatus = annualPassOrder || amount.compareTo(BigDecimal.ZERO) == 0 ? "PAID" : "PENDING_PAYMENT";
     String paymentStatus = annualPassOrder || amount.compareTo(BigDecimal.ZERO) == 0 ? "PAY_SUCCESS" : "UNPAID";
@@ -130,12 +135,74 @@ public class MockOrderService {
     return responseById(orderId);
   }
 
+  private OrderResponse createActivityOrder(CreateOrderRequest request) {
+    if (request.activityId() == null) {
+      throw new IllegalStateException("请选择活动");
+    }
+    int quantity = Math.max(1, request.quantity() == null ? 1 : request.quantity());
+    Long userId = currentVisitorId();
+    Map<String, Object> activity = activityById(request.activityId());
+    if (((Number) activity.get("is_paid")).intValue() != 1) {
+      throw new IllegalStateException("免费活动请直接报名");
+    }
+    ensureActivityOrderAllowed(userId, request.activityId());
+    ensureActivityCapacity(request.activityId(), quantity);
+
+    BigDecimal unitPrice = (BigDecimal) activity.get("price");
+    BigDecimal originalAmount = unitPrice.multiply(BigDecimal.valueOf(quantity));
+    LocalDate visitDate = activityStartDate(activity.get("start_time"));
+    String couponScope = String.valueOf(activity.get("coupon_scope"));
+    BigDecimal discountAmount = discountFor(userId, request.couponId(), originalAmount, visitDate, couponScope);
+    BigDecimal amount = originalAmount.subtract(discountAmount).max(BigDecimal.ZERO);
+    String orderStatus = amount.compareTo(BigDecimal.ZERO) == 0 ? "PAID" : "PENDING_PAYMENT";
+    String paymentStatus = amount.compareTo(BigDecimal.ZERO) == 0 ? "PAY_SUCCESS" : "UNPAID";
+    String orderNo = nextOrderNo(visitDate);
+
+    GeneratedKeyHolder keyHolder = new GeneratedKeyHolder();
+    jdbcTemplate.update(connection -> {
+      var statement = connection.prepareStatement("""
+          INSERT INTO reservation_order
+            (order_no, user_id, visit_date, session_code, order_type, original_amount, discount_amount,
+             amount, coupon_id, order_status, payment_status)
+          VALUES (?, ?, ?, 'ACTIVITY', 'ACTIVITY', ?, ?, ?, ?, ?, ?)
+          """, Statement.RETURN_GENERATED_KEYS);
+      statement.setString(1, orderNo);
+      statement.setLong(2, userId);
+      statement.setDate(3, Date.valueOf(visitDate));
+      statement.setBigDecimal(4, originalAmount);
+      statement.setBigDecimal(5, discountAmount);
+      statement.setBigDecimal(6, amount);
+      statement.setObject(7, request.couponId());
+      statement.setString(8, orderStatus);
+      statement.setString(9, paymentStatus);
+      return statement;
+    }, keyHolder);
+    Long orderId = generatedId(keyHolder);
+    jdbcTemplate.update("""
+        INSERT INTO order_activity_item (order_id, activity_id, activity_title, activity_category, quantity, unit_price)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """, orderId, request.activityId(), activity.get("title"), activity.get("category"), quantity, unitPrice);
+    if (request.couponId() != null) {
+      jdbcTemplate.update("UPDATE user_coupon SET status = 'LOCKED', order_id = ? WHERE id = ?", orderId, request.couponId());
+    }
+    if ("PAY_SUCCESS".equals(paymentStatus)) {
+      createActivitySignup(orderId);
+      jdbcTemplate.update("""
+          UPDATE user_coupon
+          SET status = 'USED', used_at = CURRENT_TIMESTAMP
+          WHERE order_id = ? AND status = 'LOCKED'
+          """, orderId);
+    }
+    return responseById(orderId);
+  }
+
   public List<OrderResponse> myOrders() {
     Long userId = currentVisitorId();
     return jdbcTemplate.query("""
         SELECT id, order_no, visit_date, session_code, order_type, original_amount, discount_amount,
                amount, order_status, payment_status, created_at,
-               COALESCE((SELECT SUM(quantity) FROM order_item WHERE order_id = reservation_order.id), 0) people_count
+               COALESCE((SELECT SUM(quantity) FROM order_item WHERE order_id = reservation_order.id), 0)
+                 + COALESCE((SELECT SUM(quantity) FROM order_activity_item WHERE order_id = reservation_order.id), 0) people_count
         FROM reservation_order
         WHERE user_id = ?
         ORDER BY created_at DESC
@@ -143,10 +210,11 @@ public class MockOrderService {
   }
 
   public QrCodeResponse qrcode(Long id) {
+    Long userId = currentVisitorId();
     return jdbcTemplate.query("""
-        SELECT order_no, visit_date, payment_status
+        SELECT order_no, visit_date, payment_status, order_type
         FROM reservation_order
-        WHERE id = ?
+        WHERE id = ? AND user_id = ?
         """, rs -> {
       if (!rs.next()) {
         throw new IllegalStateException("订单不存在");
@@ -154,14 +222,17 @@ public class MockOrderService {
       if (!"PAY_SUCCESS".equals(rs.getString("payment_status"))) {
         throw new IllegalStateException("订单未支付，不能生成入园码");
       }
+      String notice = "ACTIVITY".equals(rs.getString("order_type"))
+          ? "请按活动时间到指定集合点核验参与。"
+          : "请携带有效身份证件，于预约场次内从主入口核验入园。";
       return new QrCodeResponse(rs.getString("order_no"), "ZOORESERVE:ORDER:" + rs.getString("order_no"),
-          rs.getDate("visit_date").toLocalDate(), "请携带有效身份证件，于预约场次内从主入口核验入园。");
-    }, id);
+          rs.getDate("visit_date").toLocalDate(), notice);
+    }, id, userId);
   }
 
   @Transactional
   public PrepayResponse prepay(PrepayRequest request) {
-    Map<String, Object> order = orderByNo(request.orderNo());
+    Map<String, Object> order = visitorOrderByNo(request.orderNo());
     if ("PAY_SUCCESS".equals(order.get("payment_status"))) {
       return new PrepayResponse(request.orderNo(), "MOCK", (BigDecimal) order.get("amount"),
           PaymentStatus.PAY_SUCCESS, "mock://pay/" + request.orderNo());
@@ -182,6 +253,9 @@ public class MockOrderService {
         SET status = 'USED', used_at = CURRENT_TIMESTAMP
         WHERE order_id = ? AND status = 'LOCKED'
         """, order.get("id"));
+    if ("ACTIVITY".equals(order.get("order_type"))) {
+      createActivitySignup(((Number) order.get("id")).longValue());
+    }
     if ("ANNUAL_PASS_RENEWAL".equals(order.get("order_type")) && order.get("annual_pass_id") != null) {
       renewAnnualPassAfterPayment(order.get("annual_pass_id"));
     }
@@ -191,7 +265,7 @@ public class MockOrderService {
 
   @Transactional
   public OrderResponse cancel(Long id) {
-    Map<String, Object> order = orderById(id);
+    Map<String, Object> order = visitorOrderById(id);
     if (!"PENDING_PAYMENT".equals(order.get("order_status"))) {
       throw new IllegalStateException("只有待支付订单可以取消");
     }
@@ -203,7 +277,7 @@ public class MockOrderService {
 
   @Transactional
   public OrderResponse refund(String idOrNo) {
-    Map<String, Object> order = orderByIdOrNo(idOrNo);
+    Map<String, Object> order = visitorOrderByIdOrNo(idOrNo);
     if (!"PAY_SUCCESS".equals(order.get("payment_status"))) {
       throw new IllegalStateException("只有已支付订单可以申请退款");
     }
@@ -223,6 +297,7 @@ public class MockOrderService {
     restoreInventory(orderId);
     jdbcTemplate.update("UPDATE refund_record SET status = 'REFUNDED' WHERE id = ?", refundId);
     jdbcTemplate.update("UPDATE reservation_order SET order_status = 'REFUNDED', payment_status = 'CLOSED' WHERE id = ?", orderId);
+    jdbcTemplate.update("UPDATE activity_signup SET status = 'CANCELLED' WHERE order_id = ?", orderId);
     return Map.of("refundId", refundId, "status", "REFUNDED");
   }
 
@@ -271,7 +346,8 @@ public class MockOrderService {
     return jdbcTemplate.query("""
         SELECT id, order_no, visit_date, session_code, order_type, original_amount, discount_amount,
                amount, order_status, payment_status, created_at,
-               COALESCE((SELECT SUM(quantity) FROM order_item WHERE order_id = reservation_order.id), 0) people_count
+               COALESCE((SELECT SUM(quantity) FROM order_item WHERE order_id = reservation_order.id), 0)
+                 + COALESCE((SELECT SUM(quantity) FROM order_activity_item WHERE order_id = reservation_order.id), 0) people_count
         FROM reservation_order
         ORDER BY id
         LIMIT 1
@@ -303,6 +379,37 @@ public class MockOrderService {
       return orderById(Long.valueOf(idOrNo));
     }
     return orderByNo(idOrNo);
+  }
+
+  private Map<String, Object> visitorOrderByNo(String orderNo) {
+    try {
+      return jdbcTemplate.queryForMap("""
+          SELECT id, order_no, visit_date, order_type, amount, order_status, payment_status, annual_pass_id
+          FROM reservation_order
+          WHERE order_no = ? AND user_id = ?
+          """, orderNo, currentVisitorId());
+    } catch (EmptyResultDataAccessException exception) {
+      throw new IllegalStateException("订单不存在");
+    }
+  }
+
+  private Map<String, Object> visitorOrderById(Long id) {
+    try {
+      return jdbcTemplate.queryForMap("""
+          SELECT id, order_no, visit_date, order_type, amount, order_status, payment_status, annual_pass_id
+          FROM reservation_order
+          WHERE id = ? AND user_id = ?
+          """, id, currentVisitorId());
+    } catch (EmptyResultDataAccessException exception) {
+      throw new IllegalStateException("订单不存在");
+    }
+  }
+
+  private Map<String, Object> visitorOrderByIdOrNo(String idOrNo) {
+    if (idOrNo != null && idOrNo.matches("\\d+")) {
+      return visitorOrderById(Long.valueOf(idOrNo));
+    }
+    return visitorOrderByNo(idOrNo);
   }
 
   private String findOrderByPhone(String phone) {
@@ -385,16 +492,19 @@ public class MockOrderService {
         Date.valueOf(renewedExpiresAt), annualPassId);
   }
 
-  private BigDecimal discountFor(Long userId, Long userCouponId, BigDecimal originalAmount, LocalDate visitDate) {
+  private BigDecimal discountFor(Long userId, Long userCouponId, BigDecimal originalAmount, LocalDate visitDate, String requiredScope) {
     if (userCouponId == null) {
       return BigDecimal.ZERO;
     }
     Map<String, Object> coupon = jdbcTemplate.queryForMap("""
-        SELECT uc.id, c.discount_type, c.discount_value, c.threshold_amount, c.valid_from, c.valid_to
+        SELECT uc.id, c.discount_type, c.discount_value, c.threshold_amount, c.valid_from, c.valid_to, c.scope
         FROM user_coupon uc
         JOIN coupon c ON c.id = uc.coupon_id
         WHERE uc.id = ? AND uc.user_id = ? AND uc.status = 'UNUSED' AND c.status = 'ENABLED'
         """, userCouponId, userId);
+    if (!couponScopeMatches(String.valueOf(coupon.get("scope")), requiredScope)) {
+      throw new IllegalStateException("优惠券不适用于当前订单");
+    }
     BigDecimal threshold = (BigDecimal) coupon.get("threshold_amount");
     if (originalAmount.compareTo(threshold) < 0) {
       throw new IllegalStateException("订单金额未达到优惠券门槛");
@@ -410,6 +520,16 @@ public class MockOrderService {
       return originalAmount.subtract(originalAmount.multiply(value));
     }
     return value.min(originalAmount);
+  }
+
+  private boolean couponScopeMatches(String couponScope, String requiredScope) {
+    if (couponScope == null || requiredScope == null) {
+      return false;
+    }
+    if (couponScope.equals(requiredScope)) {
+      return true;
+    }
+    return requiredScope.startsWith("ACTIVITY") && "ACTIVITY".equals(couponScope);
   }
 
   private void restoreInventory(Object orderId) {
@@ -439,7 +559,8 @@ public class MockOrderService {
     return jdbcTemplate.query("""
         SELECT id, order_no, visit_date, session_code, order_type, original_amount, discount_amount,
                amount, order_status, payment_status, created_at,
-               COALESCE((SELECT SUM(quantity) FROM order_item WHERE order_id = reservation_order.id), 0) people_count
+               COALESCE((SELECT SUM(quantity) FROM order_item WHERE order_id = reservation_order.id), 0)
+                 + COALESCE((SELECT SUM(quantity) FROM order_activity_item WHERE order_id = reservation_order.id), 0) people_count
         FROM reservation_order
         WHERE id = ?
         """, rs -> {
@@ -494,8 +615,96 @@ public class MockOrderService {
         rs.getBigDecimal("original_amount"), rs.getBigDecimal("discount_amount"), orderItems(orderId));
   }
 
+  private Map<String, Object> activityById(Long activityId) {
+    return jdbcTemplate.queryForMap("""
+        SELECT id, title, category, start_time, capacity, is_paid, price, coupon_scope
+        FROM activity
+        WHERE id = ? AND status = 'PUBLISHED'
+        """, activityId);
+  }
+
+  private LocalDate activityStartDate(Object value) {
+    if (value instanceof LocalDateTime dateTime) {
+      return dateTime.toLocalDate();
+    }
+    if (value instanceof Timestamp timestamp) {
+      return timestamp.toLocalDateTime().toLocalDate();
+    }
+    if (value instanceof Date date) {
+      return date.toLocalDate();
+    }
+    throw new IllegalStateException("活动时间格式不正确");
+  }
+
+  private void ensureActivityCapacity(Long activityId, int quantity) {
+    Map<String, Object> activity = jdbcTemplate.queryForMap("SELECT capacity FROM activity WHERE id = ?", activityId);
+    Integer signed = jdbcTemplate.queryForObject("""
+        SELECT COUNT(*)
+        FROM activity_signup
+        WHERE activity_id = ? AND status = 'SIGNED'
+        """, Integer.class, activityId);
+    int capacity = ((Number) activity.get("capacity")).intValue();
+    if (signed == null || signed + quantity > capacity) {
+      throw new IllegalStateException("活动名额不足");
+    }
+  }
+
+  private void ensureActivityOrderAllowed(Long userId, Long activityId) {
+    Integer signed = jdbcTemplate.queryForObject("""
+        SELECT COUNT(*)
+        FROM activity_signup
+        WHERE activity_id = ? AND user_id = ? AND status = 'SIGNED'
+        """, Integer.class, activityId, userId);
+    if (signed != null && signed > 0) {
+      throw new IllegalStateException("已报名该活动");
+    }
+    Integer pending = jdbcTemplate.queryForObject("""
+        SELECT COUNT(*)
+        FROM reservation_order o
+        JOIN order_activity_item oi ON oi.order_id = o.id
+        WHERE o.user_id = ? AND oi.activity_id = ? AND o.order_status = 'PENDING_PAYMENT'
+        """, Integer.class, userId, activityId);
+    if (pending != null && pending > 0) {
+      throw new IllegalStateException("已有待支付活动订单，请先支付或取消");
+    }
+  }
+
+  private void createActivitySignup(Long orderId) {
+    Map<String, Object> item = jdbcTemplate.queryForMap("""
+        SELECT activity_id, quantity
+        FROM order_activity_item
+        WHERE order_id = ?
+        """, orderId);
+    Map<String, Object> order = jdbcTemplate.queryForMap("SELECT user_id FROM reservation_order WHERE id = ?", orderId);
+    Long activityId = ((Number) item.get("activity_id")).longValue();
+    int quantity = ((Number) item.get("quantity")).intValue();
+    ensureActivityCapacity(activityId, quantity);
+    Integer signed = jdbcTemplate.queryForObject("""
+        SELECT COUNT(*)
+        FROM activity_signup
+        WHERE activity_id = ? AND user_id = ? AND status = 'SIGNED'
+        """, Integer.class, activityId, order.get("user_id"));
+    if (signed != null && signed > 0) {
+      throw new IllegalStateException("已报名该活动");
+    }
+    int created = jdbcTemplate.update("""
+        UPDATE activity_signup
+        SET order_id = ?, status = 'SIGNED'
+        WHERE activity_id = ? AND user_id = ? AND status <> 'SIGNED'
+        """, orderId, activityId, order.get("user_id"));
+    if (created == 0) {
+      created = jdbcTemplate.update("""
+          INSERT INTO activity_signup (activity_id, user_id, order_id, status)
+          VALUES (?, ?, ?, 'SIGNED')
+          """, activityId, order.get("user_id"), orderId);
+    }
+    if (created == 0) {
+      throw new IllegalStateException("已报名该活动");
+    }
+  }
+
   private List<OrderItemResponse> orderItems(Long orderId) {
-    return jdbcTemplate.query("""
+    List<OrderItemResponse> ticketItems = jdbcTemplate.query("""
         SELECT tt.code, tt.name, oi.quantity, oi.unit_price
         FROM order_item oi
         JOIN ticket_type tt ON tt.id = oi.ticket_type_id
@@ -503,6 +712,14 @@ public class MockOrderService {
         ORDER BY oi.id
         """, (rs, rowNum) -> new OrderItemResponse(rs.getString("code"), rs.getString("name"),
         rs.getInt("quantity"), rs.getBigDecimal("unit_price")), orderId);
+    List<OrderItemResponse> activityItems = jdbcTemplate.query("""
+        SELECT CONCAT('ACTIVITY:', activity_id) AS code, activity_title AS name, quantity, unit_price
+        FROM order_activity_item
+        WHERE order_id = ?
+        ORDER BY id
+        """, (rs, rowNum) -> new OrderItemResponse(rs.getString("code"), rs.getString("name"),
+        rs.getInt("quantity"), rs.getBigDecimal("unit_price")), orderId);
+    return java.util.stream.Stream.concat(ticketItems.stream(), activityItems.stream()).toList();
   }
 
   private Long generatedId(GeneratedKeyHolder keyHolder) {

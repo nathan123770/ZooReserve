@@ -62,10 +62,10 @@ public class AdminMockService {
           """));
       case "activities" -> normalizeDateTimes(jdbcTemplate.queryForList("""
           SELECT a.id, a.title, a.category, a.start_time AS "startTime", a.capacity,
-                 COUNT(s.id) AS signed, a.location, a.status
+                 COUNT(s.id) AS signed, a.location, a.is_paid AS "paid", a.price, a.coupon_scope AS "couponScope", a.status
           FROM activity a
-          LEFT JOIN activity_signup s ON s.activity_id = a.id
-          GROUP BY a.id, a.title, a.category, a.start_time, a.capacity, a.location, a.status
+          LEFT JOIN activity_signup s ON s.activity_id = a.id AND s.status = 'SIGNED'
+          GROUP BY a.id, a.title, a.category, a.start_time, a.capacity, a.location, a.is_paid, a.price, a.coupon_scope, a.status
           ORDER BY a.start_time
           """));
       case "animals" -> jdbcTemplate.queryForList("""
@@ -145,8 +145,13 @@ public class AdminMockService {
     switch (domain) {
       case "tickets" -> jdbcTemplate.update("UPDATE ticket_type SET name = ?, price = ?, description = ?, status = ? WHERE id = ?",
           text(payload, "name"), decimal(payload, "price"), text(payload, "description"), text(payload, "status", "ENABLED"), id);
-      case "activities" -> jdbcTemplate.update("UPDATE activity SET title = ?, category = ?, start_time = ?, capacity = ?, location = ?, status = ? WHERE id = ?",
-          text(payload, "title"), text(payload, "category"), parseDateTime(text(payload, "startTime")), integer(payload, "capacity", 0), text(payload, "location"), text(payload, "status", "PUBLISHED"), id);
+      case "activities" -> jdbcTemplate.update("""
+          UPDATE activity
+          SET title = ?, category = ?, start_time = ?, capacity = ?, location = ?, is_paid = ?, price = ?, coupon_scope = ?, status = ?
+          WHERE id = ?
+          """, text(payload, "title"), text(payload, "category"), parseDateTime(text(payload, "startTime")),
+          integer(payload, "capacity", 0), text(payload, "location"), paidFlag(payload), decimal(payload, "price", BigDecimal.ZERO),
+          text(payload, "couponScope", defaultActivityScope(text(payload, "category"))), text(payload, "status", "PUBLISHED"), id);
       case "animals" -> {
         Long zoneId = ensureZone(text(payload, "zone", "未分区"));
         jdbcTemplate.update("UPDATE animal SET zone_id = ?, name = ?, species = ?, description = ?, media_url = ?, status = ? WHERE id = ?",
@@ -214,9 +219,13 @@ public class AdminMockService {
   }
 
   private Map<String, Object> createActivity(Map<String, Object> payload) {
-    GeneratedKeyHolder keyHolder = insert("INSERT INTO activity (title, category, start_time, capacity, location, status) VALUES (?, ?, ?, ?, ?, ?)",
+    GeneratedKeyHolder keyHolder = insert("""
+        INSERT INTO activity (title, category, start_time, capacity, location, is_paid, price, coupon_scope, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
         text(payload, "title"), text(payload, "category"), parseDateTime(text(payload, "startTime", LocalDateTime.now().format(DATE_TIME))),
-        integer(payload, "capacity", 0), text(payload, "location"), text(payload, "status", "PUBLISHED"));
+        integer(payload, "capacity", 0), text(payload, "location"), paidFlag(payload), decimal(payload, "price", BigDecimal.ZERO),
+        text(payload, "couponScope", defaultActivityScope(text(payload, "category"))), text(payload, "status", "PUBLISHED"));
     return byId("activities", keyId(keyHolder), null);
   }
 
@@ -411,6 +420,27 @@ public class AdminMockService {
       normalized += ":00";
     }
     return LocalDateTime.parse(normalized, DATE_TIME);
+  }
+
+  private int paidFlag(Map<String, Object> payload) {
+    Object value = payload.get("paid");
+    if (value == null) {
+      value = payload.get("isPaid");
+    }
+    if (value == null) {
+      return decimal(payload, "price", BigDecimal.ZERO).compareTo(BigDecimal.ZERO) > 0 ? 1 : 0;
+    }
+    return Boolean.TRUE.equals(value) || "true".equalsIgnoreCase(String.valueOf(value)) || "1".equals(String.valueOf(value)) ? 1 : 0;
+  }
+
+  private String defaultActivityScope(String category) {
+    if (category != null && (category.contains("夜游") || category.contains("夏夜"))) {
+      return "ACTIVITY_NIGHT";
+    }
+    if (category != null && category.contains("亲子")) {
+      return "ACTIVITY_PARENT_CHILD";
+    }
+    return "ACTIVITY";
   }
 
   private LocalDate parseDateOrNull(String value) {

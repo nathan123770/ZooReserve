@@ -143,6 +143,9 @@ CREATE TABLE IF NOT EXISTS activity (
   start_time DATETIME NOT NULL,
   capacity INT NOT NULL,
   location VARCHAR(128),
+  is_paid TINYINT NOT NULL DEFAULT 0,
+  price DECIMAL(10,2) NOT NULL DEFAULT 0,
+  coupon_scope VARCHAR(64) NOT NULL DEFAULT 'ACTIVITY',
   status VARCHAR(32) NOT NULL DEFAULT 'PUBLISHED'
 );
 
@@ -150,9 +153,20 @@ CREATE TABLE IF NOT EXISTS activity_signup (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   activity_id BIGINT NOT NULL,
   user_id BIGINT NOT NULL,
+  order_id BIGINT,
   status VARCHAR(32) NOT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uk_activity_user (activity_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS order_activity_item (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  order_id BIGINT NOT NULL,
+  activity_id BIGINT NOT NULL,
+  activity_title VARCHAR(128) NOT NULL,
+  activity_category VARCHAR(64) NOT NULL,
+  quantity INT NOT NULL,
+  unit_price DECIMAL(10,2) NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS zone (
@@ -194,7 +208,8 @@ CREATE TABLE IF NOT EXISTS user_coupon (
   status VARCHAR(32) NOT NULL DEFAULT 'UNUSED',
   order_id BIGINT,
   claimed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  used_at DATETIME
+  used_at DATETIME,
+  UNIQUE KEY uk_user_coupon (user_id, coupon_id)
 );
 
 CREATE TABLE IF NOT EXISTS annual_pass_plan (
@@ -283,9 +298,25 @@ SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEM
 PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user_coupon' AND COLUMN_NAME = 'used_at') = 0, 'ALTER TABLE user_coupon ADD COLUMN used_at DATETIME', 'SELECT 1');
 PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+DELETE uc1
+FROM user_coupon uc1
+JOIN user_coupon uc2
+  ON uc1.user_id = uc2.user_id AND uc1.coupon_id = uc2.coupon_id AND uc1.id > uc2.id;
+
+SET @ddl = IF((SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user_coupon' AND INDEX_NAME = 'uk_user_coupon') = 0, 'ALTER TABLE user_coupon ADD UNIQUE KEY uk_user_coupon (user_id, coupon_id)', 'SELECT 1');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'notice' AND COLUMN_NAME = 'display_position') = 0, 'ALTER TABLE notice ADD COLUMN display_position VARCHAR(32) NOT NULL DEFAULT ''ALL''', 'SELECT 1');
 PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'notice' AND COLUMN_NAME = 'priority') = 0, 'ALTER TABLE notice ADD COLUMN priority INT NOT NULL DEFAULT 0', 'SELECT 1');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'activity' AND COLUMN_NAME = 'is_paid') = 0, 'ALTER TABLE activity ADD COLUMN is_paid TINYINT NOT NULL DEFAULT 0', 'SELECT 1');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'activity' AND COLUMN_NAME = 'price') = 0, 'ALTER TABLE activity ADD COLUMN price DECIMAL(10,2) NOT NULL DEFAULT 0', 'SELECT 1');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'activity' AND COLUMN_NAME = 'coupon_scope') = 0, 'ALTER TABLE activity ADD COLUMN coupon_scope VARCHAR(64) NOT NULL DEFAULT ''ACTIVITY''', 'SELECT 1');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'activity_signup' AND COLUMN_NAME = 'order_id') = 0, 'ALTER TABLE activity_signup ADD COLUMN order_id BIGINT', 'SELECT 1');
 PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 INSERT IGNORE INTO role (code, name) VALUES
